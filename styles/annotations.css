@@ -1,0 +1,205 @@
+/**
+ * AnnotatePro Styles
+ * Styles for highlights, checkboxes, and UI elements
+ */
+
+/* Highlight styles */
+.annotatepro-highlight {
+  background-color: var(--annotatepro-color, #ffeb3b) !important;
+  background-image: none !important;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 0.2s ease;
+}
+
+.annotatepro-highlight:hover {
+  filter: brightness(0.95);
+}
+
+/* Text highlight (mark element) */
+.annotatepro-text-highlight {
+  padding: 0.1em 0.2em;
+  margin: 0 -0.2em;
+}
+
+/* Checkbox styles - positioned to the left of elements */
+.annotatepro-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #4caf50;
+  border-radius: 3px;
+  background: white;
+  cursor: pointer;
+  position: absolute;
+  left: -24px;
+  top: 0.15em;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  z-index: 1000;
+}
+
+.annotatepro-checkbox:hover {
+  border-color: #388e3c;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.annotatepro-checkbox:checked {
+  background: #4caf50;
+  border-color: #4caf50;
+}
+
+.annotatepro-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.annotatepro-checkbox:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.3);
+}
+
+/* Element with checkbox needs relative positioning */
+[data-annotatepro-type="checkbox"] {
+  position: relative;
+}
+
+/* Text-wrapped checkbox (selection-based) */
+.annotatepro-checkbox-text {
+  position: relative !important;
+  display: inline-block !important;
+  padding-left: 22px !important;
+  margin-left: 2px;
+}
+
+.annotatepro-checkbox-text > .annotatepro-checkbox {
+  position: absolute !important;
+  left: 2px !important;
+  top: 0.15em !important;
+  margin: 0 !important;
+}
+
+/* Intent-specific highlight colors (CSS custom properties fallback) */
+[data-annotatepro-intent="ACTION"] {
+  --annotatepro-color: #ffeb3b;
+}
+
+[data-annotatepro-intent="QUESTION"] {
+  --annotatepro-color: #64b5f6;
+}
+
+[data-annotatepro-intent="RISK"] {
+  --annotatepro-color: #ef5350;
+}
+
+[data-annotatepro-intent="REFERENCE"] {
+  --annotatepro-color: #81c784;
+}
+
+[data-annotatepro-intent="CUSTOM"] {
+  --annotatepro-color: #ce93d8;
+}
+
+/* Annotation badge (for notes indicator) */
+.annotatepro-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  background: #1976d2;
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  border-radius: 50%;
+  margin-left: 4px;
+  vertical-align: super;
+  cursor: pointer;
+}
+
+.annotatepro-badge:hover {
+  background: #1565c0;
+}
+
+/* Changed indicator */
+.annotatepro-changed {
+  position: relative;
+}
+
+.annotatepro-changed::after {
+  content: '!';
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 16px;
+  height: 16px;
+  background: #ff5722;
+  color: white;
+  font-size: 11px;
+  font-weight: bold;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Orphaned annotation indicator */
+.annotatepro-orphaned {
+  opacity: 0.5;
+  border: 2px dashed #999;
+}
+
+/* Animation for newly created annotations */
+@keyframes annotatepro-flash {
+  0% { opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { opacity: 0.5; }
+}
+
+.annotatepro-new {
+  animation: annotatepro-flash 0.3s ease-in-out 2;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .annotatepro-checkbox {
+    background: white;
+    border-color: #66bb6a;
+  }
+
+  .annotatepro-checkbox:hover {
+    border-color: #81c784;
+    box-shadow: 0 0 0 2px rgba(102, 187, 106, 0.3);
+  }
+
+  .annotatepro-checkbox:checked {
+    background: #66bb6a;
+    border-color: #66bb6a;
+  }
+
+  .annotatepro-highlight {
+    filter: brightness(0.85);
+  }
+}
+
+/* Print styles - make annotations visible but subtle */
+@media print {
+  .annotatepro-highlight {
+    background-color: #f0f0f0 !important;
+    border-bottom: 1px solid #999;
+  }
+
+  .annotatepro-checkbox {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}

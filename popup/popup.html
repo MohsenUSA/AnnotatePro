@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AnnotatePro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup">
+    <header class="header">
+      <div class="header-left">
+        <h1 class="title">AnnotatePro</h1>
+        <button class="all-pages-btn" id="btn-all-pages" title="View all annotated pages">
+          All Pages
+        </button>
+      </div>
+      <span class="badge" id="count">0</span>
+    </header>
+
+    <section class="section">
+      <h2 class="section-title">This Page</h2>
+      <div class="stats" id="page-stats">
+        <div class="stat">
+          <span class="stat-value" id="page-highlights">0</span>
+          <span class="stat-label">Highlights</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="page-checkboxes">0</span>
+          <span class="stat-label">Checkboxes</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="section-quick-actions" style="display: none;">
+      <h2 class="section-title">Quick Actions</h2>
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-highlight">
+          <span class="btn-icon">H</span>
+          Highlight Selection
+        </button>
+        <button class="btn btn-secondary" id="btn-checkbox">
+          <span class="btn-icon">C</span>
+          Add Checkbox
+        </button>
+      </div>
+    </section>
+
+    <section class="section" id="section-intents" style="display: none;">
+      <h2 class="section-title">Intent Colors</h2>
+      <div class="intents">
+        <button class="intent-btn" data-intent="ACTION" title="Action (1)">
+          <span class="intent-color action"></span>
+          <span>Action</span>
+        </button>
+        <button class="intent-btn" data-intent="QUESTION" title="Question (2)">
+          <span class="intent-color question"></span>
+          <span>Question</span>
+        </button>
+        <button class="intent-btn" data-intent="RISK" title="Risk (3)">
+          <span class="intent-color risk"></span>
+          <span>Risk</span>
+        </button>
+        <button class="intent-btn" data-intent="REFERENCE" title="Reference (4)">
+          <span class="intent-color reference"></span>
+          <span>Reference</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="section" id="section-no-selection">
+      <p class="no-selection-msg">Select text on the page to highlight or add a checkbox.</p>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Annotations on This Page</h2>
+      <div class="annotation-list" id="annotation-list">
+        <div class="empty-state" id="empty-state">No annotations yet</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Page Actions</h2>
+      <div class="actions">
+        <button class="btn btn-danger" id="btn-clear">
+          Clear All Annotations
+        </button>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="shortcuts">
+        <span class="shortcut"><kbd>Alt</kbd>+<kbd>H</kbd> Highlight</span>
+        <span class="shortcut"><kbd>Alt</kbd>+<kbd>C</kbd> Checkbox</span>
+        <span class="shortcut"><kbd>1-4</kbd> Intent</span>
+      </div>
+      <div class="storage-info" id="storage-info">
+        <span class="storage-label">Storage:</span>
+        <span class="storage-value" id="storage-value">--</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

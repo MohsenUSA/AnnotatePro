@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "AnnotatePro",
+  "version": "1.0.0",
+  "description": "Persistent web annotations - add checkboxes and highlights to any webpage",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "annotatepro@mohajiho.com",
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": ["none"],
+        "optional": []
+      }
+    }
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "contextMenus"
+  ],
+  "background": {
+    "scripts": ["background/background.js"],
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "css": ["styles/annotations.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": "icons/icon.svg"
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  },
+  "commands": {
+    "toggle-highlight": {
+      "suggested_key": {
+        "default": "Alt+H"
+      },
+      "description": "Highlight selected text"
+    },
+    "toggle-checkbox": {
+      "suggested_key": {
+        "default": "Alt+C"
+      },
+      "description": "Add checkbox to element"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

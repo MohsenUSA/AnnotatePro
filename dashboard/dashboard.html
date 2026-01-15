@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AnnotatePro - All Pages</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="dashboard">
+    <header class="header">
+      <div class="header-content">
+        <h1 class="title">AnnotatePro</h1>
+        <p class="subtitle">All Annotated Pages</p>
+      </div>
+      <div class="header-stats">
+        <div class="stat">
+          <span class="stat-value" id="total-pages">0</span>
+          <span class="stat-label">Pages</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="total-annotations">0</span>
+          <span class="stat-label">Annotations</span>
+        </div>
+        <div class="stat stat-storage">
+          <span class="stat-value" id="storage-used">--</span>
+          <span class="stat-label">Storage</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <input type="text" id="search-input" placeholder="Search pages..." />
+      </div>
+      <div class="toolbar-actions">
+        <select id="sort-select">
+          <option value="recent">Most Recent</option>
+          <option value="most">Most Annotations</option>
+          <option value="alpha">Alphabetical</option>
+        </select>
+        <button class="toolbar-btn" id="btn-export" title="Export all annotations">
+          Export
+        </button>
+        <button class="toolbar-btn" id="btn-import" title="Import annotations from file">
+          Import
+        </button>
+        <input type="file" id="import-file" accept=".json" style="display: none;" />
+      </div>
+    </div>
+
+    <main class="page-list" id="page-list">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">📝</div>
+        <h2>No annotations yet</h2>
+        <p>Start annotating pages and they'll appear here.</p>
+      </div>
+    </main>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
