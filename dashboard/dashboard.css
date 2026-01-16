@@ -435,6 +435,12 @@ body {
   color: #999;
 }
 
+.annotation-note-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 .annotation-delete {
   width: 28px;
   height: 28px;
@@ -659,6 +665,154 @@ body {
   color: #155724;
 }
 
+/* Color picker in detail modal */
+.detail-color-picker {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.detail-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+  padding: 0;
+}
+
+.detail-color-swatch:hover {
+  transform: scale(1.1);
+}
+
+.detail-color-swatch.active {
+  border-color: #333;
+}
+
+/* Clear color button (X) for checkboxes */
+.detail-color-clear {
+  background: #f5f5f5 !important;
+  border: 2px dashed #ccc !important;
+  font-size: 16px;
+  font-weight: bold;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.detail-color-clear:hover {
+  background: #eee !important;
+  border-color: #999 !important;
+  color: #666;
+}
+
+.detail-color-clear.active {
+  border-color: #333 !important;
+  border-style: solid !important;
+}
+
+.color-edit-status {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.color-edit-status.saving {
+  color: #f59e0b;
+}
+
+.color-edit-status.saved {
+  color: #22c55e;
+}
+
+.color-edit-status.error {
+  color: #ef4444;
+}
+
+/* Note toolbar in detail modal */
+.note-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.note-toolbar-btn {
+  width: 32px;
+  height: 28px;
+  border: 1px solid #ddd;
+  background: #f9f9f9;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  transition: all 0.15s ease;
+}
+
+.note-toolbar-btn:hover {
+  background: #eee;
+  border-color: #ccc;
+  color: #333;
+}
+
+.note-toolbar-btn:active {
+  background: #ddd;
+}
+
+/* Note editing in detail modal */
+.detail-note-textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.detail-note-textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.detail-note-textarea::placeholder {
+  color: #999;
+}
+
+.note-edit-status {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.note-edit-status.saving {
+  color: #f59e0b;
+}
+
+.note-edit-status.saved {
+  color: #22c55e;
+}
+
+.note-edit-status.error {
+  color: #ef4444;
+}
+
+.detail-timestamps {
+  display: flex;
+  gap: 24px;
+}
+
+.detail-timestamp {
+  flex: 1;
+}
+
 .detail-text-box em {
   color: #888;
 }
@@ -681,6 +835,57 @@ body {
     background: #333;
     border-color: #444;
     color: #e0e0e0;
+  }
+
+  .detail-color-swatch.active {
+    border-color: #fff;
+  }
+
+  .detail-color-clear {
+    background: #3a3a3a !important;
+    border-color: #555 !important;
+    color: #888;
+  }
+
+  .detail-color-clear:hover {
+    background: #444 !important;
+    border-color: #777 !important;
+    color: #aaa;
+  }
+
+  .detail-color-clear.active {
+    border-color: #fff !important;
+  }
+
+  .note-toolbar-btn {
+    background: #3a3a3a;
+    border-color: #555;
+    color: #aaa;
+  }
+
+  .note-toolbar-btn:hover {
+    background: #444;
+    border-color: #666;
+    color: #e0e0e0;
+  }
+
+  .note-toolbar-btn:active {
+    background: #555;
+  }
+
+  .detail-note-textarea {
+    background: #333;
+    border-color: #444;
+    color: #e0e0e0;
+  }
+
+  .detail-note-textarea:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  }
+
+  .detail-note-textarea::placeholder {
+    color: #666;
   }
 
   .detail-text-box em {

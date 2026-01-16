@@ -10,6 +10,14 @@
   let currentSort = 'recent';
   let searchQuery = '';
 
+  const COLOR_PRESETS = [
+    { name: 'Yellow', value: 'rgba(255, 235, 59, 0.5)' },
+    { name: 'Blue', value: 'rgba(100, 181, 246, 0.5)' },
+    { name: 'Red', value: 'rgba(239, 83, 80, 0.5)' },
+    { name: 'Green', value: 'rgba(129, 199, 132, 0.5)' },
+    { name: 'Purple', value: 'rgba(206, 147, 216, 0.5)' }
+  ];
+
   // DOM Elements
   const pageListEl = document.getElementById('page-list');
   const emptyStateEl = document.getElementById('empty-state');
@@ -157,6 +165,7 @@
                   <p class="annotation-text">${escapeHtml(truncate(a.textSnapshot || '(element)', 100))}</p>
                   <span class="annotation-time">${formatRelativeTime(a.updatedAt)}</span>
                 </div>
+                ${a.note && a.note.trim() ? '<span class="annotation-note-icon" title="Has note">📝</span>' : ''}
                 <button class="annotation-delete" title="Delete">&times;</button>
               </div>
             `).join('')}
@@ -176,10 +185,26 @@
     modal.querySelectorAll('.annotation-checkbox').forEach(checkbox => {
       checkbox.addEventListener('change', async (e) => {
         const id = checkbox.dataset.id;
+        const isChecked = checkbox.checked;
         await sendMessage('UPDATE_ANNOTATION', {
           id,
-          patch: { checked: checkbox.checked }
+          patch: { checked: isChecked }
         });
+
+        // Notify content script on matching page to update checkbox
+        try {
+          const tabs = await browser.tabs.query({});
+          for (const tab of tabs) {
+            if (tab.url && page.pageUrl && tab.url.startsWith(page.pageUrl.split('#')[0])) {
+              browser.tabs.sendMessage(tab.id, {
+                type: 'COMMAND_UPDATE_CHECKBOX',
+                annotationId: id,
+                checked: isChecked
+              }).catch(() => {});
+            }
+          }
+        } catch (e) {}
+
         // Refresh page list to update counts
         loadPages();
       });
@@ -230,6 +255,55 @@
   }
 
   /**
+   * Auto-capitalize first letter of textarea
+   */
+  function setupAutoCapitalize(textarea) {
+    textarea.addEventListener('input', () => {
+      const val = textarea.value;
+      if (val.length === 1 && val[0] !== val[0].toUpperCase()) {
+        const start = textarea.selectionStart;
+        textarea.value = val[0].toUpperCase() + val.slice(1);
+        textarea.selectionStart = textarea.selectionEnd = start;
+      }
+    });
+  }
+
+  /**
+   * Insert bullet or checkbox prefix at cursor position in textarea
+   */
+  function insertNoteFormat(textarea, format) {
+    const prefix = format === 'bullet' ? '- ' : '[] ';
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const value = textarea.value;
+
+    // Find the start of the current line
+    let lineStart = start;
+    while (lineStart > 0 && value[lineStart - 1] !== '\n') {
+      lineStart--;
+    }
+
+    // Check if line already has this prefix
+    const lineContent = value.slice(lineStart, end);
+    const bulletMatch = lineContent.match(/^- /);
+    const checkboxMatch = lineContent.match(/^\[[x ]?\] /);
+
+    if ((format === 'bullet' && bulletMatch) || (format === 'checkbox' && checkboxMatch)) {
+      // Remove existing prefix
+      const prefixLen = bulletMatch ? 2 : (checkboxMatch[0].length);
+      textarea.value = value.slice(0, lineStart) + value.slice(lineStart + prefixLen);
+      textarea.selectionStart = textarea.selectionEnd = start - prefixLen;
+    } else {
+      // Insert prefix at line start
+      textarea.value = value.slice(0, lineStart) + prefix + value.slice(lineStart);
+      textarea.selectionStart = textarea.selectionEnd = start + prefix.length;
+    }
+
+    // Trigger input event for auto-save
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  /**
    * Escape for HTML attribute
    */
   function escapeAttr(text) {
@@ -268,29 +342,48 @@
             <p>${annotation.checked ? '✅ Checked' : '⬜ Unchecked'}</p>
           </div>
           ` : ''}
-          ${annotation.note ? `
           <div class="detail-section">
-            <h3>Note</h3>
-            <p>${escapeHtml(annotation.note)}</p>
+            <div class="detail-section-header">
+              <h3>Color</h3>
+              <span class="color-edit-status"></span>
+            </div>
+            <div class="detail-color-picker">
+              ${COLOR_PRESETS.map(c => `
+                <button class="detail-color-swatch ${c.value === (annotation.color || 'rgba(255, 235, 59, 0.5)') ? 'active' : ''}"
+                        data-color="${c.value}"
+                        title="${c.name}"
+                        style="background: ${c.value}"></button>
+              `).join('')}
+              ${annotation.annotationType === 'checkbox' ? `<button class="detail-color-swatch detail-color-clear ${!annotation.color || annotation.color === 'transparent' ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
+            </div>
           </div>
-          ` : ''}
           <div class="detail-section">
-            <h3>Created</h3>
-            <p>${new Date(annotation.createdAt).toLocaleString()}</p>
+            <div class="detail-section-header">
+              <h3>Note</h3>
+              <span class="note-edit-status"></span>
+            </div>
+            <div class="note-toolbar">
+              <button class="note-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+              <button class="note-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+            </div>
+            <textarea class="detail-note-textarea"
+                      placeholder="Add a note to this annotation..."
+                      autocapitalize="sentences"
+                      rows="3">${escapeHtml(annotation.note || '')}</textarea>
           </div>
-          <div class="detail-section">
-            <h3>Last Updated</h3>
-            <p>${new Date(annotation.updatedAt).toLocaleString()}</p>
+          <div class="detail-section detail-timestamps">
+            <div class="detail-timestamp">
+              <h3>Created</h3>
+              <p>${new Date(annotation.createdAt).toLocaleString()}</p>
+            </div>
+            <div class="detail-timestamp">
+              <h3>Last Updated</h3>
+              <p>${new Date(annotation.updatedAt).toLocaleString()}</p>
+            </div>
           </div>
         </div>
       </div>
     `;
-
-    // Close handlers
-    detailModal.querySelector('.modal-close').addEventListener('click', () => detailModal.remove());
-    detailModal.addEventListener('click', (e) => {
-      if (e.target === detailModal) detailModal.remove();
-    });
 
     // Copy button handler
     const copyBtn = detailModal.querySelector('.copy-btn');
@@ -309,6 +402,140 @@
         }
       });
     }
+
+    // Color picker handlers
+    const colorStatus = detailModal.querySelector('.color-edit-status');
+    detailModal.querySelectorAll('.detail-color-swatch').forEach(swatch => {
+      swatch.addEventListener('click', async () => {
+        const newColor = swatch.dataset.color;
+
+        // Update active state
+        detailModal.querySelectorAll('.detail-color-swatch').forEach(s => s.classList.remove('active'));
+        swatch.classList.add('active');
+
+        // Save color
+        try {
+          colorStatus.textContent = 'Saving...';
+          colorStatus.className = 'color-edit-status saving';
+
+          await sendMessage('UPDATE_ANNOTATION', {
+            id: annotation.id,
+            patch: { color: newColor }
+          });
+          annotation.color = newColor;
+
+          // Update color in annotation list
+          const listItem = document.querySelector(`.annotation-item[data-id="${annotation.id}"]`);
+          if (listItem) {
+            listItem.querySelector('.annotation-color').style.background = newColor;
+          }
+
+          // Tell content script on matching page to update color
+          try {
+            const tabs = await browser.tabs.query({});
+            for (const tab of tabs) {
+              if (tab.url && annotation.pageUrl && tab.url.startsWith(annotation.pageUrl.split('#')[0])) {
+                browser.tabs.sendMessage(tab.id, {
+                  type: 'COMMAND_UPDATE_COLOR',
+                  annotationId: annotation.id,
+                  color: newColor
+                }).catch(() => {});
+              }
+            }
+          } catch (e) {}
+
+          colorStatus.textContent = 'Saved';
+          colorStatus.className = 'color-edit-status saved';
+          setTimeout(() => { colorStatus.textContent = ''; }, 1500);
+        } catch (err) {
+          colorStatus.textContent = 'Error';
+          colorStatus.className = 'color-edit-status error';
+          console.error('Failed to save color:', err);
+        }
+      });
+    });
+
+    // Note editing with auto-save
+    const noteTextarea = detailModal.querySelector('.detail-note-textarea');
+    const noteStatus = detailModal.querySelector('.note-edit-status');
+    setupAutoCapitalize(noteTextarea);
+
+    // Toolbar button handlers
+    detailModal.querySelectorAll('.note-toolbar-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.action;
+        insertNoteFormat(noteTextarea, action);
+        noteTextarea.focus();
+      });
+    });
+
+    let saveTimer;
+
+    noteTextarea.addEventListener('input', () => {
+      noteStatus.textContent = 'Saving...';
+      noteStatus.className = 'note-edit-status saving';
+
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        try {
+          await sendMessage('UPDATE_ANNOTATION', {
+            id: annotation.id,
+            patch: { note: noteTextarea.value }
+          });
+          noteStatus.textContent = 'Saved';
+          noteStatus.className = 'note-edit-status saved';
+          annotation.note = noteTextarea.value;
+
+          // Tell content script on matching page to update badge
+          try {
+            const tabs = await browser.tabs.query({});
+            for (const tab of tabs) {
+              if (tab.url && annotation.pageUrl && tab.url.startsWith(annotation.pageUrl.split('#')[0])) {
+                browser.tabs.sendMessage(tab.id, {
+                  type: 'COMMAND_UPDATE_NOTE_BADGE',
+                  annotationId: annotation.id,
+                  note: noteTextarea.value
+                }).catch(() => {}); // Ignore errors for tabs without content script
+              }
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+
+          setTimeout(() => { noteStatus.textContent = ''; }, 2000);
+        } catch (err) {
+          noteStatus.textContent = 'Error saving';
+          noteStatus.className = 'note-edit-status error';
+          console.error('Failed to save note:', err);
+        }
+      }, 500);
+    });
+
+    // Update note icon in list and close modal
+    const closeDetailModal = () => {
+      // Update note icon in the annotation list
+      const listItem = document.querySelector(`.annotation-item[data-id="${annotation.id}"]`);
+      if (listItem) {
+        let noteIcon = listItem.querySelector('.annotation-note-icon');
+        const hasNote = annotation.note && annotation.note.trim();
+        if (hasNote && !noteIcon) {
+          noteIcon = document.createElement('span');
+          noteIcon.className = 'annotation-note-icon';
+          noteIcon.title = 'Has note';
+          noteIcon.textContent = '📝';
+          listItem.querySelector('.annotation-delete').before(noteIcon);
+        } else if (!hasNote && noteIcon) {
+          noteIcon.remove();
+        }
+      }
+      detailModal.remove();
+    };
+
+    detailModal.querySelector('.modal-close').addEventListener('click', closeDetailModal);
+    detailModal.addEventListener('click', (e) => {
+      if (e.target === detailModal) closeDetailModal();
+    });
 
     document.body.appendChild(detailModal);
   }
@@ -523,6 +750,22 @@
       if (e.target.files.length > 0) {
         importAnnotations(e.target.files[0]);
         e.target.value = ''; // Reset for future imports
+      }
+    });
+
+    // Listen for messages from background script
+    browser.runtime.onMessage.addListener((message) => {
+      if (message.type === 'REFRESH_DATA') {
+        loadPages();
+        updateStorageInfo();
+      } else if (message.type === 'CHECKBOX_UPDATED') {
+        // Update checkbox in modal if open
+        const checkbox = document.querySelector(`.annotation-checkbox[data-id="${message.annotationId}"]`);
+        if (checkbox) {
+          checkbox.checked = message.checked;
+        }
+        // Refresh page list to update counts
+        loadPages();
       }
     });
 

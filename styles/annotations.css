@@ -5,12 +5,14 @@
 
 /* Highlight styles */
 .annotatepro-highlight {
-  background-color: var(--annotatepro-color, #ffeb3b) !important;
+  background-color: var(--annotatepro-color, rgba(255, 235, 59, 0.5)) !important;
   background-image: none !important;
   border-radius: 2px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
   transition: background-color 0.2s ease;
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
 }
 
 .annotatepro-highlight:hover {
@@ -21,6 +23,8 @@
 .annotatepro-text-highlight {
   padding: 0.1em 0.2em;
   margin: 0 -0.2em;
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
 }
 
 /* Checkbox styles - positioned to the left of elements */
@@ -201,5 +205,501 @@
   .annotatepro-checkbox {
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
+  }
+}
+
+/* ============ Note Indicator Badge ============ */
+.annotatepro-note-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  background: #8b5cf6;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 1000;
+  box-shadow: 0 0 6px 2px rgba(139, 92, 246, 0.7);
+  transition: transform 0.15s;
+}
+
+.annotatepro-note-badge:hover {
+  transform: scale(1.1);
+}
+
+/* Make parent position relative for badge positioning */
+.annotatepro-highlight[data-has-note="true"],
+.annotatepro-checkbox-text[data-has-note="true"] {
+  position: relative;
+}
+
+/* Note tooltip */
+.annotatepro-note-tooltip {
+  position: fixed;
+  z-index: 10002;
+  max-width: 250px;
+  padding: 8px 12px;
+  background: #333;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-note-tooltip.visible {
+  opacity: 1;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .annotatepro-note-badge {
+    background: #a78bfa;
+    box-shadow: 0 0 6px 2px rgba(167, 139, 250, 0.8);
+  }
+
+  .annotatepro-note-tooltip {
+    background: #1f1f1f;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* ============ Note Editor (Content Script) ============ */
+.annotatepro-note-editor {
+  position: fixed;
+  z-index: 10001;
+  width: 280px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.annotatepro-note-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.annotatepro-note-title {
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+}
+
+.annotatepro-note-status {
+  font-size: 11px;
+  margin-right: 8px;
+}
+
+.annotatepro-note-status.saving {
+  color: #f59e0b;
+}
+
+.annotatepro-note-status.saved {
+  color: #22c55e;
+}
+
+.annotatepro-note-status.error {
+  color: #ef4444;
+}
+
+.annotatepro-note-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.annotatepro-note-close:hover {
+  background: #e0e0e0;
+  color: #333;
+}
+
+/* Color picker */
+.annotatepro-color-picker {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-wrap: wrap;
+}
+
+.annotatepro-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+}
+
+.annotatepro-color-swatch:hover {
+  transform: scale(1.15);
+}
+
+.annotatepro-color-swatch.active {
+  border-color: #333;
+}
+
+/* Clear color button (X) for checkboxes */
+.annotatepro-color-clear {
+  background: #f5f5f5 !important;
+  border: 2px dashed #ccc !important;
+  font-size: 14px;
+  font-weight: bold;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.annotatepro-color-clear:hover {
+  background: #eee !important;
+  border-color: #999 !important;
+  color: #666;
+}
+
+.annotatepro-color-clear.active {
+  border-color: #333 !important;
+  border-style: solid !important;
+}
+
+/* Note toolbar */
+.annotatepro-note-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.annotatepro-toolbar-btn {
+  width: 28px;
+  height: 24px;
+  border: 1px solid #ddd;
+  background: #f9f9f9;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  transition: all 0.15s ease;
+}
+
+.annotatepro-toolbar-btn:hover {
+  background: #eee;
+  border-color: #ccc;
+  color: #333;
+}
+
+.annotatepro-toolbar-btn:active {
+  background: #ddd;
+}
+
+/* Rendered note formatting (tooltips) */
+.annotatepro-note-list {
+  margin: 4px 0;
+  padding-left: 18px;
+  list-style-type: disc;
+}
+
+.annotatepro-note-list li {
+  margin: 2px 0;
+}
+
+.annotatepro-note-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.annotatepro-note-cb {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
+
+.annotatepro-note-tooltip p {
+  margin: 4px 0;
+}
+
+.annotatepro-note-textarea {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: none;
+  min-height: 80px;
+  box-sizing: border-box;
+}
+
+.annotatepro-note-textarea:focus {
+  outline: none;
+}
+
+.annotatepro-note-textarea::placeholder {
+  color: #999;
+}
+
+/* ============ Clear Confirmation Dialog ============ */
+.annotatepro-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10003;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-confirm-dialog {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  max-width: 400px;
+  width: 90%;
+  overflow: hidden;
+}
+
+.annotatepro-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  background: #fef2f2;
+  border-bottom: 1px solid #fecaca;
+}
+
+.annotatepro-confirm-icon {
+  font-size: 24px;
+}
+
+.annotatepro-confirm-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #991b1b;
+}
+
+.annotatepro-confirm-body {
+  padding: 20px;
+}
+
+.annotatepro-confirm-body p {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #333;
+}
+
+.annotatepro-confirm-body p:last-child {
+  margin-bottom: 0;
+}
+
+.annotatepro-confirm-tip {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 10px 12px !important;
+  color: #0369a1 !important;
+  font-size: 13px !important;
+}
+
+.annotatepro-confirm-actions {
+  display: flex;
+  gap: 8px;
+  padding: 16px 20px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+}
+
+.annotatepro-confirm-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.annotatepro-confirm-btn.cancel {
+  background: white;
+  border: 1px solid #d1d5db;
+  color: #374151;
+}
+
+.annotatepro-confirm-btn.cancel:hover {
+  background: #f3f4f6;
+}
+
+.annotatepro-confirm-btn.export {
+  background: #2563eb;
+  border: 1px solid #2563eb;
+  color: white;
+}
+
+.annotatepro-confirm-btn.export:hover {
+  background: #1d4ed8;
+}
+
+.annotatepro-confirm-btn.delete {
+  background: #dc2626;
+  border: 1px solid #dc2626;
+  color: white;
+}
+
+.annotatepro-confirm-btn.delete:hover {
+  background: #b91c1c;
+}
+
+/* Dark mode for confirmation dialog */
+@media (prefers-color-scheme: dark) {
+  .annotatepro-confirm-dialog {
+    background: #1f1f1f;
+  }
+
+  .annotatepro-confirm-header {
+    background: #3a1f1f;
+    border-color: #5a2a2a;
+  }
+
+  .annotatepro-confirm-header h3 {
+    color: #fca5a5;
+  }
+
+  .annotatepro-confirm-body p {
+    color: #e5e5e5;
+  }
+
+  .annotatepro-confirm-tip {
+    background: #1e3a5f;
+    border-color: #2563eb;
+    color: #93c5fd !important;
+  }
+
+  .annotatepro-confirm-actions {
+    background: #2a2a2a;
+    border-color: #3a3a3a;
+  }
+
+  .annotatepro-confirm-btn.cancel {
+    background: #3a3a3a;
+    border-color: #4a4a4a;
+    color: #e5e5e5;
+  }
+
+  .annotatepro-confirm-btn.cancel:hover {
+    background: #4a4a4a;
+  }
+}
+
+/* Dark mode for note editor */
+@media (prefers-color-scheme: dark) {
+  .annotatepro-note-editor {
+    background: #2a2a2a;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  }
+
+  .annotatepro-note-header {
+    background: #333;
+    border-color: #444;
+  }
+
+  .annotatepro-color-picker {
+    border-color: #444;
+  }
+
+  .annotatepro-color-swatch.active {
+    border-color: #fff;
+  }
+
+  .annotatepro-color-clear {
+    background: #3a3a3a !important;
+    border-color: #555 !important;
+    color: #888;
+  }
+
+  .annotatepro-color-clear:hover {
+    background: #444 !important;
+    border-color: #777 !important;
+    color: #aaa;
+  }
+
+  .annotatepro-color-clear.active {
+    border-color: #fff !important;
+  }
+
+  .annotatepro-note-title {
+    color: #e0e0e0;
+  }
+
+  .annotatepro-note-close {
+    color: #999;
+  }
+
+  .annotatepro-note-close:hover {
+    background: #444;
+    color: #e0e0e0;
+  }
+
+  .annotatepro-note-textarea {
+    background: #2a2a2a;
+    color: #e0e0e0;
+  }
+
+  .annotatepro-note-textarea::placeholder {
+    color: #666;
+  }
+
+  .annotatepro-note-toolbar {
+    border-color: #444;
+  }
+
+  .annotatepro-toolbar-btn {
+    background: #3a3a3a;
+    border-color: #555;
+    color: #aaa;
+  }
+
+  .annotatepro-toolbar-btn:hover {
+    background: #444;
+    border-color: #666;
+    color: #e0e0e0;
+  }
+
+  .annotatepro-toolbar-btn:active {
+    background: #555;
+  }
+
+  .annotatepro-note-cb {
+    accent-color: #818cf8;
   }
 }

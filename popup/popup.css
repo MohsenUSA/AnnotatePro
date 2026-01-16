@@ -14,7 +14,8 @@ body {
   line-height: 1.4;
   color: #333;
   background: #fff;
-  min-width: 280px;
+  width: 300px;
+  min-height: 200px;
 }
 
 .popup {
@@ -271,6 +272,22 @@ body {
   flex-shrink: 0;
 }
 
+.annotation-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+}
+
+.annotation-main:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
 .annotation-text {
   flex: 1;
   font-size: 12px;
@@ -280,11 +297,24 @@ body {
   min-width: 0;
 }
 
+.annotation-note-indicator {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
 .annotation-type {
   font-size: 10px;
   color: #999;
   text-transform: uppercase;
   flex-shrink: 0;
+}
+
+.popup-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  accent-color: #4caf50;
 }
 
 .annotation-delete {
@@ -306,6 +336,125 @@ body {
 .annotation-delete:hover {
   background: #ffebee;
   color: #d32f2f;
+}
+
+/* Note Editor */
+.annotation-item.editing {
+  flex-wrap: wrap;
+}
+
+.annotation-note-editor {
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}
+
+/* Color picker */
+.color-picker {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.color-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+  padding: 0;
+}
+
+.color-swatch:hover {
+  transform: scale(1.15);
+}
+
+.color-swatch.active {
+  border-color: #333;
+}
+
+/* Clear color button (X) for checkboxes */
+.color-clear {
+  background: #f5f5f5 !important;
+  border: 2px dashed #ccc !important;
+  font-size: 12px;
+  font-weight: bold;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.color-clear:hover {
+  background: #eee !important;
+  border-color: #999 !important;
+  color: #666;
+}
+
+.color-clear.active {
+  border-color: #333 !important;
+  border-style: solid !important;
+}
+
+/* Note toolbar */
+.note-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.note-toolbar-btn {
+  width: 26px;
+  height: 22px;
+  border: 1px solid #ddd;
+  background: #f9f9f9;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  transition: all 0.15s ease;
+}
+
+.note-toolbar-btn:hover {
+  background: #eee;
+  border-color: #ccc;
+  color: #333;
+}
+
+.note-toolbar-btn:active {
+  background: #ddd;
+}
+
+.note-textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 50px;
+  box-sizing: border-box;
+}
+
+.note-textarea:focus {
+  outline: none;
+  border-color: #1976d2;
+}
+
+.note-editor-footer {
+  margin-top: 4px;
+}
+
+.note-status {
+  font-size: 11px;
+  color: #666;
 }
 
 /* Footer */
@@ -436,6 +585,60 @@ kbd {
 
   .annotation-delete:hover {
     background: #3a2020;
+  }
+
+  .annotation-main:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .annotation-note-editor {
+    border-top-color: #444;
+  }
+
+  .note-textarea {
+    background: #2a2a2a;
+    border-color: #444;
+    color: #e0e0e0;
+  }
+
+  .note-textarea:focus {
+    border-color: #6366f1;
+  }
+
+  .color-swatch.active {
+    border-color: #fff;
+  }
+
+  .color-clear {
+    background: #3a3a3a !important;
+    border-color: #555 !important;
+    color: #888;
+  }
+
+  .color-clear:hover {
+    background: #444 !important;
+    border-color: #777 !important;
+    color: #aaa;
+  }
+
+  .color-clear.active {
+    border-color: #fff !important;
+  }
+
+  .note-toolbar-btn {
+    background: #3a3a3a;
+    border-color: #555;
+    color: #aaa;
+  }
+
+  .note-toolbar-btn:hover {
+    background: #444;
+    border-color: #666;
+    color: #e0e0e0;
+  }
+
+  .note-toolbar-btn:active {
+    background: #555;
   }
 
   .no-selection-msg {

@@ -23,6 +23,19 @@ const MessageType = {
 };
 
 /**
+ * Notify all dashboard tabs to refresh their data
+ */
+async function notifyDashboardTabs(messageType, data = {}) {
+  const dashboardUrl = browser.runtime.getURL('dashboard/dashboard.html');
+  const tabs = await browser.tabs.query({});
+  for (const tab of tabs) {
+    if (tab.url && tab.url.startsWith(dashboardUrl)) {
+      browser.tabs.sendMessage(tab.id, { type: messageType, ...data }).catch(() => {});
+    }
+  }
+}
+
+/**
  * Handle messages from content scripts and popup
  */
 browser.runtime.onMessage.addListener((message, sender) => {
@@ -54,7 +67,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
       return db.getPagesSummary();
 
     case MessageType.CLEAR_PAGE_ANNOTATIONS:
-      return db.clearPageAnnotations(payload.pageUrl);
+      return db.clearPageAnnotations(payload.pageUrl).then(() => {
+        notifyDashboardTabs('REFRESH_DATA');
+      });
 
     case MessageType.IMPORT_ANNOTATIONS:
       return db.importAnnotations(payload.annotations);
@@ -67,6 +82,17 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
     case MessageType.DELETE_GROUP:
       return db.deleteGroup(payload.id);
+
+    case 'OPEN_DASHBOARD':
+      browser.tabs.create({ url: browser.runtime.getURL('dashboard/dashboard.html') });
+      return Promise.resolve();
+
+    case 'BROADCAST_CHECKBOX_UPDATE':
+      notifyDashboardTabs('CHECKBOX_UPDATED', {
+        annotationId: payload?.annotationId || message.annotationId,
+        checked: payload?.checked ?? message.checked
+      });
+      return Promise.resolve();
 
     default:
       return Promise.reject(new Error(`Unknown message type: ${type}`));
@@ -152,6 +178,14 @@ function createContextMenus() {
     contexts: ['all']
   });
 
+  // Add/Edit Note
+  browser.contextMenus.create({
+    id: 'annotatepro-edit-note',
+    parentId: 'annotatepro-parent',
+    title: 'Add/Edit Note',
+    contexts: ['all']
+  });
+
   // Separator
   browser.contextMenus.create({
     id: 'annotatepro-separator-2',
@@ -190,12 +224,14 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_HIGHLIGHT', intent });
   } else if (menuId === 'annotatepro-checkbox') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CHECKBOX' });
+  } else if (menuId === 'annotatepro-edit-note') {
+    console.log('AnnotatePro: Sending COMMAND_EDIT_NOTE to tab', tab.id);
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_EDIT_NOTE' });
   } else if (menuId === 'annotatepro-remove') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_REMOVE' });
   } else if (menuId === 'annotatepro-clear-page') {
-    const pageUrl = tab.url.split('#')[0];
-    await db.clearPageAnnotations(pageUrl);
-    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_RELOAD_ANNOTATIONS' });
+    // Show confirmation dialog in content script
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CLEAR_CONFIRM' });
   }
 });
 
@@ -205,7 +241,29 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 browser.runtime.onInstalled.addListener(async (details) => {
   await db.open();
   createContextMenus();
-  console.log('AnnotatePro: Database initialized, context menus created');
+  console.log('AnnotatePro: Extension installed/updated, context menus created');
 });
 
-console.log('AnnotatePro: Background script loaded');
+/**
+ * Initialize on every script startup (including wake from suspension)
+ */
+(async function initBackground() {
+  try {
+    // Pre-open database immediately so it's ready for requests
+    await db.open();
+    console.log('AnnotatePro: Background script ready');
+  } catch (error) {
+    console.error('AnnotatePro: Failed to initialize background:', error);
+  }
+})();
+
+/**
+ * Keep background script alive by responding to alarms
+ * This helps prevent Firefox from suspending the background too aggressively
+ */
+browser.alarms?.create('keepalive', { periodInMinutes: 0.5 });
+browser.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepalive') {
+    // Just a heartbeat to keep the script alive
+  }
+});

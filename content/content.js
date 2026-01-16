@@ -6,6 +6,12 @@
 (function() {
   'use strict';
 
+  // Prevent multiple initializations
+  if (window.__annotateProInitialized) {
+    return;
+  }
+  window.__annotateProInitialized = true;
+
   // ============ Fingerprint Module ============
 
   function normalizeText(text) {
@@ -307,7 +313,6 @@
             // Only skip inline wrappers we created
             const isInlineWrapper = parent.tagName === 'MARK' || parent.classList.contains('annotatepro-checkbox-text');
             if (!isInlineWrapper) {
-              console.log('AnnotatePro: Found text match via TreeWalker:', textToFind.slice(0, 30));
               return { element: parent, score: 0.6, method: 'text-search' };
             }
           }
@@ -344,12 +349,12 @@
   // ============ Render Module ============
 
   const INTENT_COLORS = {
-    ACTION: '#ffeb3b',
-    QUESTION: '#64b5f6',
-    RISK: '#ef5350',
-    REFERENCE: '#81c784',
-    CUSTOM: '#ce93d8',
-    DEFAULT: '#ffeb3b'
+    ACTION: 'rgba(255, 235, 59, 0.5)',
+    QUESTION: 'rgba(100, 181, 246, 0.5)',
+    RISK: 'rgba(239, 83, 80, 0.5)',
+    REFERENCE: 'rgba(129, 199, 132, 0.5)',
+    CUSTOM: 'rgba(206, 147, 216, 0.5)',
+    DEFAULT: 'rgba(255, 235, 59, 0.5)'
   };
 
   function applyHighlight(element, annotation) {
@@ -433,28 +438,16 @@
   function applyCheckbox(element, annotation) {
     const { id, checked, note, textSnapshot, selectionStartOffset, selectionLength } = annotation;
 
-    console.log('AnnotatePro: applyCheckbox called:', {
-      id,
-      selectionStartOffset,
-      selectionLength,
-      hasTextSnapshot: !!textSnapshot,
-      isTextCheckbox: selectionStartOffset !== undefined && selectionLength && textSnapshot
-    });
-
     // Check if checkbox already exists
     const existing = document.querySelector(`[data-annotatepro-checkbox-id="${id}"]`);
     if (existing) {
-      console.log('AnnotatePro: Checkbox already exists:', id);
       return existing;
     }
 
     // If it's a text selection checkbox, wrap the text first
     if (selectionStartOffset !== undefined && selectionLength && textSnapshot) {
-      console.log('AnnotatePro: Creating text checkbox');
       return applyTextCheckbox(element, annotation);
     }
-
-    console.log('AnnotatePro: Creating element checkbox');
 
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
@@ -482,7 +475,9 @@
   }
 
   function applyTextCheckbox(element, annotation) {
-    const { id, checked, note, textSnapshot } = annotation;
+    const { id, checked, note, textSnapshot, color, intent } = annotation;
+    const hasTransparentColor = color === 'transparent';
+    const checkboxColor = hasTransparentColor ? 'transparent' : (color || INTENT_COLORS[intent] || INTENT_COLORS.DEFAULT);
 
     // Check if already exists
     const existing = document.querySelector(`[data-annotatepro-checkbox-id="${id}"]`);
@@ -517,6 +512,7 @@
           wrapper.setAttribute('data-annotatepro-id', id);
           wrapper.setAttribute('data-annotatepro-type', 'checkbox');
           wrapper.classList.add('annotatepro-checkbox-text');
+          wrapper.style.setProperty('--annotatepro-color', checkboxColor);
 
           // Wrap the selected text
           const range = document.createRange();
@@ -538,10 +534,12 @@
           // Insert checkbox at the beginning of the wrapper
           wrapper.insertBefore(checkbox, wrapper.firstChild);
 
-          // Also set wrapper inline styles as backup
-          wrapper.style.cssText = 'position: relative !important; display: inline-block !important; padding-left: 22px !important;';
-
-          console.log('AnnotatePro: Created text checkbox for:', textSnapshot);
+          // Also set wrapper inline styles as backup (include background color if not transparent)
+          if (hasTransparentColor) {
+            wrapper.style.cssText = 'position: relative !important; display: inline-block !important; padding-left: 22px !important;';
+          } else {
+            wrapper.style.cssText = `position: relative !important; display: inline-block !important; padding-left: 22px !important; background-color: var(--annotatepro-color, ${checkboxColor}) !important; border-radius: 2px;`;
+          }
           return checkbox;
         } catch (err) {
           console.error('AnnotatePro: Failed to wrap text for checkbox:', err);
@@ -551,13 +549,6 @@
       }
     }
 
-    // Log debug info about why text wasn't found
-    console.log('AnnotatePro: Text not found for checkbox:', {
-      textSnapshot,
-      elementTag: element.tagName,
-      elementTextPreview: (element.textContent || '').slice(0, 100),
-      textNodesCount: document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode() ? 'has text nodes' : 'no text nodes'
-    });
     // Fallback to element checkbox if text not found
     return applyCheckbox(element, { ...annotation, selectionStartOffset: undefined });
   }
@@ -612,13 +603,474 @@
     }
   }
 
+  // ============ Note Editor Module ============
+
+  let activeNoteEditor = null;
+  let saveDebounceTimer = null;
+  let activeTooltip = null;
+
+  /**
+   * Show clear confirmation dialog
+   */
+  function showClearConfirmDialog() {
+    // Remove any existing dialog
+    const existing = document.querySelector('.annotatepro-confirm-dialog');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'annotatepro-confirm-overlay';
+
+    overlay.innerHTML = `
+      <div class="annotatepro-confirm-dialog">
+        <div class="annotatepro-confirm-header">
+          <span class="annotatepro-confirm-icon">⚠️</span>
+          <h3>Clear All Annotations</h3>
+        </div>
+        <div class="annotatepro-confirm-body">
+          <p><strong>You are about to delete all annotations on this page.</strong></p>
+          <p>This action cannot be undone. All highlights, checkboxes, and notes on this page will be permanently lost.</p>
+          <p class="annotatepro-confirm-tip">You can export your data first from the Dashboard to create a backup.</p>
+        </div>
+        <div class="annotatepro-confirm-actions">
+          <button class="annotatepro-confirm-btn cancel">Cancel</button>
+          <button class="annotatepro-confirm-btn export">Open Dashboard</button>
+          <button class="annotatepro-confirm-btn delete">Delete All</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Button handlers
+    overlay.querySelector('.cancel').addEventListener('click', () => {
+      overlay.remove();
+    });
+
+    overlay.querySelector('.export').addEventListener('click', () => {
+      browser.runtime.sendMessage({ type: 'OPEN_DASHBOARD' });
+      overlay.remove();
+    });
+
+    overlay.querySelector('.delete').addEventListener('click', async () => {
+      overlay.remove();
+      // Send message to background to clear and reload
+      const pageUrl = window.location.href.split('#')[0];
+      await browser.runtime.sendMessage({
+        type: 'CLEAR_PAGE_ANNOTATIONS',
+        payload: { pageUrl }
+      });
+      clearAllAnnotationsFromDOM();
+    });
+
+    // Click outside to cancel
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+
+    // Escape to cancel
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+  }
+
+  /**
+   * Update note badge on annotation element (plain purple circle, no icon)
+   */
+  function updateNoteBadge(annotationId, hasNote) {
+    const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotationId}"]`);
+    if (!annotatedEl) return;
+
+    // Find or create badge
+    let badge = annotatedEl.querySelector('.annotatepro-note-badge');
+
+    if (hasNote) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'annotatepro-note-badge';
+        // No text content - just the purple circle
+        annotatedEl.appendChild(badge);
+
+        // Add hover listeners for tooltip
+        badge.addEventListener('mouseenter', (e) => {
+          const annotation = annotationDataMap.get(annotationId);
+          if (annotation?.note) {
+            showNoteTooltip(annotation.note, e.target);
+          }
+        });
+        badge.addEventListener('mouseleave', () => {
+          hideNoteTooltip();
+        });
+      }
+      annotatedEl.setAttribute('data-has-note', 'true');
+    } else {
+      if (badge) {
+        badge.remove();
+      }
+      annotatedEl.removeAttribute('data-has-note');
+    }
+  }
+
+  /**
+   * Show note tooltip near the badge
+   */
+  function showNoteTooltip(noteText, anchorEl) {
+    hideNoteTooltip();
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'annotatepro-note-tooltip';
+
+    // Truncate for display, then render formatted
+    const displayText = noteText.length > 150 ? noteText.slice(0, 150) + '...' : noteText;
+    tooltip.innerHTML = renderFormattedNote(displayText);
+
+    document.body.appendChild(tooltip);
+
+    // Position near anchor
+    const rect = anchorEl.getBoundingClientRect();
+    tooltip.style.top = `${rect.bottom + 6}px`;
+    tooltip.style.left = `${rect.left}px`;
+
+    // Make visible after positioning
+    requestAnimationFrame(() => {
+      tooltip.classList.add('visible');
+    });
+
+    activeTooltip = tooltip;
+  }
+
+  /**
+   * Hide note tooltip
+   */
+  function hideNoteTooltip() {
+    if (activeTooltip) {
+      activeTooltip.remove();
+      activeTooltip = null;
+    }
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /**
+   * Auto-capitalize first letter of textarea
+   */
+  function setupAutoCapitalize(textarea) {
+    textarea.addEventListener('input', () => {
+      const val = textarea.value;
+      if (val.length === 1 && val[0] !== val[0].toUpperCase()) {
+        const start = textarea.selectionStart;
+        textarea.value = val[0].toUpperCase() + val.slice(1);
+        textarea.selectionStart = textarea.selectionEnd = start;
+      }
+    });
+  }
+
+  /**
+   * Insert bullet or checkbox prefix at cursor position in textarea
+   */
+  function insertNoteFormat(textarea, format) {
+    const prefix = format === 'bullet' ? '- ' : '[] ';
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const value = textarea.value;
+
+    // Find the start of the current line
+    let lineStart = start;
+    while (lineStart > 0 && value[lineStart - 1] !== '\n') {
+      lineStart--;
+    }
+
+    // Check if line already has this prefix
+    const lineContent = value.slice(lineStart, end);
+    const bulletMatch = lineContent.match(/^- /);
+    const checkboxMatch = lineContent.match(/^\[[x ]?\] /);
+
+    if ((format === 'bullet' && bulletMatch) || (format === 'checkbox' && checkboxMatch)) {
+      // Remove existing prefix
+      const prefixLen = bulletMatch ? 2 : (checkboxMatch[0].length);
+      textarea.value = value.slice(0, lineStart) + value.slice(lineStart + prefixLen);
+      textarea.selectionStart = textarea.selectionEnd = start - prefixLen;
+    } else {
+      // Insert prefix at line start
+      textarea.value = value.slice(0, lineStart) + prefix + value.slice(lineStart);
+      textarea.selectionStart = textarea.selectionEnd = start + prefix.length;
+    }
+
+    // Trigger input event for auto-save
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  /**
+   * Render note text with formatted bullets and checkboxes
+   */
+  function renderFormattedNote(text, annotationId = null) {
+    if (!text) return '';
+
+    const lines = text.split('\n');
+    let html = '';
+    let inList = false;
+
+    for (const line of lines) {
+      const bulletMatch = line.match(/^- (.*)$/);
+      const uncheckedMatch = line.match(/^\[\] (.*)$/);
+      const checkedMatch = line.match(/^\[x\] (.*)$/i);
+
+      if (bulletMatch) {
+        if (!inList) {
+          html += '<ul class="annotatepro-note-list">';
+          inList = true;
+        }
+        html += `<li>${escapeHtml(bulletMatch[1])}</li>`;
+      } else if (uncheckedMatch || checkedMatch) {
+        if (inList) {
+          html += '</ul>';
+          inList = false;
+        }
+        const checked = !!checkedMatch;
+        const content = checked ? checkedMatch[1] : uncheckedMatch[1];
+        const dataAttr = annotationId ? `data-annotation-id="${annotationId}"` : '';
+        html += `<div class="annotatepro-note-checkbox-item" ${dataAttr}>
+          <input type="checkbox" class="annotatepro-note-cb" ${checked ? 'checked' : ''}>
+          <span>${escapeHtml(content)}</span>
+        </div>`;
+      } else {
+        if (inList) {
+          html += '</ul>';
+          inList = false;
+        }
+        if (line.trim()) {
+          html += `<p>${escapeHtml(line)}</p>`;
+        }
+      }
+    }
+
+    if (inList) {
+      html += '</ul>';
+    }
+
+    return html;
+  }
+
+  const COLOR_PRESETS = [
+    { name: 'Yellow', value: 'rgba(255, 235, 59, 0.5)' },
+    { name: 'Blue', value: 'rgba(100, 181, 246, 0.5)' },
+    { name: 'Red', value: 'rgba(239, 83, 80, 0.5)' },
+    { name: 'Green', value: 'rgba(129, 199, 132, 0.5)' },
+    { name: 'Purple', value: 'rgba(206, 147, 216, 0.5)' }
+  ];
+
+  function createNoteEditor(annotation, anchorElement) {
+    // Remove any existing editor
+    removeNoteEditor();
+
+    const editor = document.createElement('div');
+    editor.className = 'annotatepro-note-editor';
+    editor.setAttribute('data-annotation-id', annotation.id);
+
+    const currentColor = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
+
+    const isCheckbox = annotation.annotationType === 'checkbox';
+    const hasNoColor = !annotation.color || annotation.color === 'transparent';
+
+    editor.innerHTML = `
+      <div class="annotatepro-note-header">
+        <span class="annotatepro-note-title">Note</span>
+        <span class="annotatepro-note-status"></span>
+        <button class="annotatepro-note-close" title="Close">&times;</button>
+      </div>
+      <div class="annotatepro-color-picker">
+        ${COLOR_PRESETS.map(c => `
+          <button class="annotatepro-color-swatch ${c.value === currentColor ? 'active' : ''}"
+                  data-color="${c.value}"
+                  title="${c.name}"
+                  style="background: ${c.value}"></button>
+        `).join('')}
+        ${isCheckbox ? `<button class="annotatepro-color-swatch annotatepro-color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
+      </div>
+      <div class="annotatepro-note-toolbar">
+        <button class="annotatepro-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+        <button class="annotatepro-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+      </div>
+      <textarea class="annotatepro-note-textarea"
+                placeholder="Add a note..."
+                autocapitalize="sentences"
+                rows="3">${escapeHtml(annotation.note || '')}</textarea>
+    `;
+
+    // Position near the anchor element
+    const rect = anchorElement.getBoundingClientRect();
+    editor.style.top = `${Math.min(rect.bottom + 8, window.innerHeight - 200)}px`;
+    editor.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 300))}px`;
+
+    document.body.appendChild(editor);
+    activeNoteEditor = { editor, annotation, originalNote: annotation.note || '' };
+
+    // Setup event listeners
+    setupNoteEditorListeners(editor, annotation);
+
+    // Focus the textarea
+    const textarea = editor.querySelector('.annotatepro-note-textarea');
+    setupAutoCapitalize(textarea);
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+    return editor;
+  }
+
+  function removeNoteEditor() {
+    if (activeNoteEditor) {
+      activeNoteEditor.editor.remove();
+      activeNoteEditor = null;
+      document.removeEventListener('click', handleClickOutsideNote);
+    }
+    clearTimeout(saveDebounceTimer);
+  }
+
+  function setupNoteEditorListeners(editor, annotation) {
+    const textarea = editor.querySelector('.annotatepro-note-textarea');
+    const closeBtn = editor.querySelector('.annotatepro-note-close');
+    const statusEl = editor.querySelector('.annotatepro-note-status');
+
+    // Color swatch click handlers
+    editor.querySelectorAll('.annotatepro-color-swatch').forEach(swatch => {
+      swatch.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const newColor = swatch.dataset.color;
+
+        // Update active state
+        editor.querySelectorAll('.annotatepro-color-swatch').forEach(s => s.classList.remove('active'));
+        swatch.classList.add('active');
+
+        // Update annotation color
+        try {
+          statusEl.textContent = 'Saving...';
+          statusEl.className = 'annotatepro-note-status saving';
+
+          await sendMessage(MessageType.UPDATE_ANNOTATION, {
+            id: annotation.id,
+            patch: { color: newColor }
+          });
+
+          annotation.color = newColor;
+
+          // Update the element on the page (highlight or checkbox wrapper)
+          const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotation.id}"]`);
+          if (annotatedEl) {
+            if (newColor === 'transparent') {
+              annotatedEl.style.removeProperty('--annotatepro-color');
+              annotatedEl.style.backgroundColor = 'transparent';
+            } else {
+              annotatedEl.style.setProperty('--annotatepro-color', newColor);
+              // For checkbox wrappers, also update background-color directly
+              if (annotatedEl.classList.contains('annotatepro-checkbox-text')) {
+                annotatedEl.style.backgroundColor = newColor;
+              }
+            }
+          }
+
+          statusEl.textContent = 'Saved';
+          statusEl.className = 'annotatepro-note-status saved';
+          setTimeout(() => { statusEl.textContent = ''; }, 1500);
+        } catch (err) {
+          statusEl.textContent = 'Error';
+          statusEl.className = 'annotatepro-note-status error';
+          console.error('AnnotatePro: Failed to save color', err);
+        }
+      });
+    });
+
+    // Toolbar button handlers
+    editor.querySelectorAll('.annotatepro-toolbar-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.action;
+        insertNoteFormat(textarea, action);
+        textarea.focus();
+      });
+    });
+
+    // Auto-save on input with debounce
+    textarea.addEventListener('input', () => {
+      statusEl.textContent = 'Saving...';
+      statusEl.className = 'annotatepro-note-status saving';
+
+      clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = setTimeout(async () => {
+        try {
+          await sendMessage(MessageType.UPDATE_ANNOTATION, {
+            id: annotation.id,
+            patch: { note: textarea.value }
+          });
+          statusEl.textContent = 'Saved';
+          statusEl.className = 'annotatepro-note-status saved';
+          if (activeNoteEditor) {
+            activeNoteEditor.originalNote = textarea.value;
+          }
+          // Update the annotation object
+          annotation.note = textarea.value;
+          // Update the note badge
+          updateNoteBadge(annotation.id, !!(textarea.value && textarea.value.trim()));
+        } catch (err) {
+          statusEl.textContent = 'Error';
+          statusEl.className = 'annotatepro-note-status error';
+          console.error('AnnotatePro: Failed to save note', err);
+        }
+      }, 500);
+    });
+
+    // Close button
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeNoteEditor();
+    });
+
+    // Escape to cancel (revert to original)
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        // Revert to original
+        if (activeNoteEditor) {
+          textarea.value = activeNoteEditor.originalNote;
+        }
+        removeNoteEditor();
+      }
+    });
+
+    // Prevent editor from closing when clicking inside
+    editor.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    // Click outside to close (delayed to avoid immediate close)
+    setTimeout(() => {
+      document.addEventListener('click', handleClickOutsideNote);
+    }, 100);
+  }
+
+  function handleClickOutsideNote(e) {
+    if (activeNoteEditor && !activeNoteEditor.editor.contains(e.target)) {
+      removeNoteEditor();
+    }
+  }
+
   // ============ Main Content Script ============
 
   const MessageType = {
     ADD_ANNOTATION: 'ADD_ANNOTATION',
     UPDATE_ANNOTATION: 'UPDATE_ANNOTATION',
     DELETE_ANNOTATION: 'DELETE_ANNOTATION',
-    GET_PAGE_ANNOTATIONS: 'GET_PAGE_ANNOTATIONS'
+    GET_PAGE_ANNOTATIONS: 'GET_PAGE_ANNOTATIONS',
+    GET_ANNOTATION: 'GET_ANNOTATION'
   };
 
   const attachedAnnotations = new Set();
@@ -636,18 +1088,11 @@
       const pageUrl = getPageUrl();
       const annotations = await sendMessage(MessageType.GET_PAGE_ANNOTATIONS, { pageUrl });
 
-      console.log('AnnotatePro: Loading annotations:', annotations?.length || 0);
-
       if (!annotations || annotations.length === 0) {
         return;
       }
 
       const results = reattachAll(annotations);
-
-      console.log('AnnotatePro: Reattachment results:', {
-        attached: results.attached.length,
-        orphaned: results.orphaned.length
-      });
 
       for (const { annotation, element, score } of results.attached) {
         // Check if already attached AND still exists in DOM
@@ -658,29 +1103,12 @@
             continue; // Already exists in DOM, skip
           }
           // Element was removed by page - clear stale entry
-          console.log('AnnotatePro: DOM element removed, re-applying:', annotation.id);
           attachedAnnotations.delete(annotation.id);
         }
-
-        console.log('AnnotatePro: Applying annotation:', {
-          id: annotation.id,
-          type: annotation.annotationType,
-          hasSelectionOffset: annotation.selectionStartOffset !== undefined,
-          textSnapshot: annotation.textSnapshot?.slice(0, 30),
-          score
-        });
 
         applyAnnotation(element, annotation);
         attachedAnnotations.add(annotation.id);
         setupAnnotationListeners(element, annotation);
-      }
-
-      if (results.orphaned.length > 0) {
-        console.log('AnnotatePro: Orphaned annotations:', results.orphaned.map(a => ({
-          id: a.id,
-          type: a.annotationType,
-          textSnapshot: a.textSnapshot?.slice(0, 30)
-        })));
       }
     } catch (error) {
       console.error('AnnotatePro: Failed to load annotations', error);
@@ -787,7 +1215,9 @@
         wrapper.setAttribute('data-annotatepro-id', saved.id);
         wrapper.setAttribute('data-annotatepro-type', 'checkbox');
         wrapper.classList.add('annotatepro-checkbox-text');
-        wrapper.style.cssText = 'position: relative !important; display: inline-block !important; padding-left: 22px !important;';
+        // Set default color using CSS variable for future color changes
+        wrapper.style.setProperty('--annotatepro-color', INTENT_COLORS.DEFAULT);
+        wrapper.style.cssText = `position: relative !important; display: inline-block !important; padding-left: 22px !important; background-color: var(--annotatepro-color, ${INTENT_COLORS.DEFAULT}) !important; border-radius: 2px;`;
 
         // Wrap the selected range directly
         range.surroundContents(wrapper);
@@ -809,7 +1239,6 @@
         const container = wrapper.parentElement || wrapper;
         setupAnnotationListeners(container, saved);
 
-        console.log('AnnotatePro: Created text checkbox directly from selection');
       } catch (wrapError) {
         // surroundContents can fail if selection spans multiple elements
         console.warn('AnnotatePro: Direct wrap failed, falling back to search:', wrapError.message);
@@ -843,19 +1272,50 @@
     }
   }
 
+  // Store annotation data for click-to-edit access
+  const annotationDataMap = new Map();
+
   function setupAnnotationListeners(element, annotation) {
+    // Store annotation data for later access
+    annotationDataMap.set(annotation.id, annotation);
+
+    // Update note badge based on whether annotation has a note
+    updateNoteBadge(annotation.id, !!(annotation.note && annotation.note.trim()));
+
     if (annotation.annotationType === 'checkbox') {
       const checkbox = document.querySelector(
         `[data-annotatepro-checkbox-id="${annotation.id}"]`
       );
       if (checkbox) {
         checkbox.addEventListener('change', async (e) => {
+          const isChecked = e.target.checked;
           await sendMessage(MessageType.UPDATE_ANNOTATION, {
             id: annotation.id,
-            patch: { checked: e.target.checked }
+            patch: { checked: isChecked }
           });
+          // Notify dashboard to update checkbox
+          browser.runtime.sendMessage({
+            type: 'BROADCAST_CHECKBOX_UPDATE',
+            annotationId: annotation.id,
+            checked: isChecked
+          }).catch(() => {});
         });
       }
+    }
+
+    // Click to edit note - find the actual annotated element
+    const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotation.id}"]`);
+    if (annotatedEl) {
+      annotatedEl.addEventListener('click', (e) => {
+        // Don't trigger on checkbox input clicks
+        if (e.target.classList.contains('annotatepro-checkbox')) return;
+        // Don't trigger if user is selecting text
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed) return;
+
+        e.stopPropagation();
+        createNoteEditor(annotation, annotatedEl);
+      });
     }
 
     element.addEventListener('contextmenu', (e) => {
@@ -915,13 +1375,19 @@
    */
   function findAnnotationId(element) {
     let current = element;
+
+    // Handle text nodes
+    if (current && current.nodeType === Node.TEXT_NODE) {
+      current = current.parentElement;
+    }
+
     while (current && current !== document.body) {
       // Check for highlight annotation
-      if (current.hasAttribute('data-annotatepro-id')) {
+      if (current.hasAttribute && current.hasAttribute('data-annotatepro-id')) {
         return current.getAttribute('data-annotatepro-id');
       }
-      // Check for checkbox annotation
-      if (current.hasAttribute('data-annotatepro-checkbox-id')) {
+      // Check for checkbox annotation (the input element)
+      if (current.hasAttribute && current.hasAttribute('data-annotatepro-checkbox-id')) {
         return current.getAttribute('data-annotatepro-checkbox-id');
       }
       current = current.parentElement;
@@ -1005,6 +1471,10 @@
         loadAnnotations();
         break;
 
+      case 'COMMAND_CLEAR_CONFIRM':
+        showClearConfirmDialog();
+        break;
+
       case 'COMMAND_DELETE_BY_ID':
         if (message.annotationId) {
           deleteAnnotation(message.annotationId);
@@ -1014,27 +1484,146 @@
       case 'COMMAND_CHECK_SELECTION':
         const sel = window.getSelection();
         return Promise.resolve(sel && !sel.isCollapsed && sel.toString().trim().length > 0);
+
+      case 'COMMAND_UPDATE_NOTE_BADGE':
+        if (message.annotationId !== undefined) {
+          // Update local annotation data if we have it
+          const existingData = annotationDataMap.get(message.annotationId);
+          if (existingData) {
+            existingData.note = message.note || '';
+          }
+          updateNoteBadge(message.annotationId, !!(message.note && message.note.trim()));
+        }
+        break;
+
+      case 'COMMAND_UPDATE_COLOR':
+        if (message.annotationId && message.color) {
+          // Update local annotation data
+          const colorData = annotationDataMap.get(message.annotationId);
+          if (colorData) {
+            colorData.color = message.color;
+          }
+          // Update the element (highlight or checkbox wrapper)
+          const colorEl = document.querySelector(`[data-annotatepro-id="${message.annotationId}"]`);
+          if (colorEl) {
+            if (message.color === 'transparent') {
+              colorEl.style.removeProperty('--annotatepro-color');
+              colorEl.style.backgroundColor = 'transparent';
+            } else {
+              colorEl.style.setProperty('--annotatepro-color', message.color);
+              // For checkbox wrappers, also update background-color directly
+              if (colorEl.classList.contains('annotatepro-checkbox-text')) {
+                colorEl.style.backgroundColor = message.color;
+              }
+            }
+          }
+        }
+        break;
+
+      case 'COMMAND_UPDATE_CHECKBOX':
+        if (message.annotationId !== undefined) {
+          // Update local annotation data
+          const checkboxData = annotationDataMap.get(message.annotationId);
+          if (checkboxData) {
+            checkboxData.checked = message.checked;
+          }
+          // Update the checkbox element
+          const checkboxEl = document.querySelector(`[data-annotatepro-checkbox-id="${message.annotationId}"]`);
+          if (checkboxEl) {
+            checkboxEl.checked = message.checked;
+          }
+        }
+        break;
+
+      case 'COMMAND_EDIT_NOTE':
+        (async () => {
+          // First, check if there's selected text - create highlight + open note
+          const selection = window.getSelection();
+          if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
+            const saved = await createHighlight('DEFAULT');
+            if (saved) {
+              const annotatedEl = document.querySelector(`[data-annotatepro-id="${saved.id}"]`);
+              if (annotatedEl) {
+                createNoteEditor(saved, annotatedEl);
+              }
+            }
+            return;
+          }
+
+          // Otherwise, check if right-clicked on an existing annotation
+          if (lastContextMenuTarget) {
+            const noteAnnotationId = findAnnotationId(lastContextMenuTarget);
+            if (noteAnnotationId) {
+              // Get annotation data from map, or fetch from database
+              let annotationData = annotationDataMap.get(noteAnnotationId);
+              if (!annotationData) {
+                annotationData = await sendMessage(MessageType.GET_ANNOTATION, { id: noteAnnotationId });
+                if (annotationData) {
+                  annotationDataMap.set(noteAnnotationId, annotationData);
+                }
+              }
+              if (annotationData) {
+                const annotatedEl = document.querySelector(`[data-annotatepro-id="${noteAnnotationId}"]`);
+                if (annotatedEl) {
+                  createNoteEditor(annotationData, annotatedEl);
+                }
+              }
+            }
+          }
+        })();
+        break;
     }
   });
 
   function setupMutationObserver() {
     let pending = false;
+    let debounceTimer = null;
 
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((mutations) => {
+      // Ignore mutations caused by our own extension
+      const isOwnMutation = mutations.every(mutation => {
+        // Check if the mutation target or added/removed nodes are our elements
+        const target = mutation.target;
+        if (target.classList?.contains('annotatepro-highlight') ||
+            target.classList?.contains('annotatepro-checkbox') ||
+            target.classList?.contains('annotatepro-note-editor') ||
+            target.classList?.contains('annotatepro-confirm-overlay') ||
+            target.hasAttribute?.('data-annotatepro-id')) {
+          return true;
+        }
+        // Check added nodes
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            if (node.classList?.contains('annotatepro-highlight') ||
+                node.classList?.contains('annotatepro-checkbox') ||
+                node.classList?.contains('annotatepro-note-editor') ||
+                node.hasAttribute?.('data-annotatepro-id')) {
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+
+      if (isOwnMutation) return;
       if (pending) return;
-      pending = true;
 
-      if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => {
-          pending = false;
-          loadAnnotations();
-        }, { timeout: 1000 });
-      } else {
-        setTimeout(() => {
-          pending = false;
-          loadAnnotations();
-        }, 300);
-      }
+      // Debounce with longer timeout
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        pending = true;
+        if (typeof requestIdleCallback !== 'undefined') {
+          requestIdleCallback(() => {
+            pending = false;
+            loadAnnotations();
+          }, { timeout: 2000 });
+        } else {
+          setTimeout(() => {
+            pending = false;
+            loadAnnotations();
+          }, 500);
+        }
+      }, 300);
     });
 
     observer.observe(document.body, {
