@@ -200,8 +200,22 @@ class IndexedDBHelper {
   }
 
   /**
+   * Clear ALL annotations from the database
+   */
+  async clearAllAnnotations() {
+    await this.open();
+
+    return new Promise((resolve, reject) => {
+      const store = this.getStore('annotations', 'readwrite');
+      const request = store.clear();
+      request.onsuccess = () => resolve({ success: true });
+      request.onerror = () => reject(new Error(`Failed to clear annotations: ${request.error?.message}`));
+    });
+  }
+
+  /**
    * Get summary of all pages with annotations
-   * Returns array of { pageUrl, title, highlightCount, checkboxCount, lastUpdated }
+   * Returns array of { pageUrl, title, highlightCount, checkboxCount, pageNoteCount, lastUpdated }
    */
   async getPagesSummary() {
     await this.open();
@@ -218,6 +232,7 @@ class IndexedDBHelper {
           title: annotation.pageTitle || this.extractTitleFromUrl(url),
           highlightCount: 0,
           checkboxCount: 0,
+          pageNoteCount: 0,
           lastUpdated: annotation.updatedAt
         });
       }
@@ -230,6 +245,8 @@ class IndexedDBHelper {
         if (annotation.checked) {
           page.checkedCount = (page.checkedCount || 0) + 1;
         }
+      } else if (annotation.annotationType === 'page-note') {
+        page.pageNoteCount++;
       }
 
       if (annotation.updatedAt > page.lastUpdated) {

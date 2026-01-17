@@ -23,16 +23,28 @@ const MessageType = {
 };
 
 /**
- * Notify all dashboard tabs to refresh their data
+ * Broadcast a message to all extension contexts (dashboard, popup, content scripts)
  */
-async function notifyDashboardTabs(messageType, data = {}) {
+async function broadcastMessage(messageType, data = {}) {
   const dashboardUrl = browser.runtime.getURL('dashboard/dashboard.html');
   const tabs = await browser.tabs.query({});
+
   for (const tab of tabs) {
     if (tab.url && tab.url.startsWith(dashboardUrl)) {
+      // Send to dashboard tabs
       browser.tabs.sendMessage(tab.id, { type: messageType, ...data }).catch(() => {});
+    } else if (data.pageUrl && tab.url) {
+      // Send to content scripts on matching pages
+      const tabPageUrl = tab.url.split('#')[0];
+      const targetPageUrl = data.pageUrl.split('#')[0];
+      if (tabPageUrl === targetPageUrl) {
+        browser.tabs.sendMessage(tab.id, { type: messageType, ...data }).catch(() => {});
+      }
     }
   }
+
+  // Send to popup (if open) via runtime message
+  browser.runtime.sendMessage({ type: messageType, ...data }).catch(() => {});
 }
 
 /**
@@ -43,13 +55,30 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
   switch (type) {
     case MessageType.ADD_ANNOTATION:
-      return db.addAnnotation(payload);
+      return db.addAnnotation(payload).then(saved => {
+        broadcastMessage('ANNOTATION_ADDED', { annotation: saved, pageUrl: saved.pageUrl });
+        return saved;
+      });
 
     case MessageType.UPDATE_ANNOTATION:
-      return db.updateAnnotation(payload.id, payload.patch);
+      return db.updateAnnotation(payload.id, payload.patch).then(async updated => {
+        broadcastMessage('ANNOTATION_UPDATED', {
+          annotationId: payload.id,
+          patch: payload.patch,
+          pageUrl: updated?.pageUrl
+        });
+        return updated;
+      });
 
     case MessageType.DELETE_ANNOTATION:
-      return db.deleteAnnotation(payload.id);
+      return db.getAnnotation(payload.id).then(annotation => {
+        return db.deleteAnnotation(payload.id).then(() => {
+          broadcastMessage('ANNOTATION_DELETED', {
+            annotationId: payload.id,
+            pageUrl: annotation?.pageUrl
+          });
+        });
+      });
 
     case MessageType.GET_ANNOTATION:
       return db.getAnnotation(payload.id);
@@ -68,11 +97,19 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
     case MessageType.CLEAR_PAGE_ANNOTATIONS:
       return db.clearPageAnnotations(payload.pageUrl).then(() => {
-        notifyDashboardTabs('REFRESH_DATA');
+        broadcastMessage('PAGE_CLEARED', { pageUrl: payload.pageUrl });
       });
 
     case MessageType.IMPORT_ANNOTATIONS:
-      return db.importAnnotations(payload.annotations);
+      return db.importAnnotations(payload.annotations).then(result => {
+        broadcastMessage('ANNOTATIONS_IMPORTED', { result });
+        return result;
+      });
+
+    case 'CLEAR_ALL_ANNOTATIONS':
+      return db.clearAllAnnotations().then(() => {
+        broadcastMessage('DATABASE_CLEARED', {});
+      });
 
     case MessageType.ADD_GROUP:
       return db.addGroup(payload);
@@ -88,7 +125,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
       return Promise.resolve();
 
     case 'BROADCAST_CHECKBOX_UPDATE':
-      notifyDashboardTabs('CHECKBOX_UPDATED', {
+      // This is now handled by ANNOTATION_UPDATED broadcast, but keep for backwards compatibility
+      broadcastMessage('CHECKBOX_UPDATED', {
         annotationId: payload?.annotationId || message.annotationId,
         checked: payload?.checked ?? message.checked
       });
@@ -162,6 +200,22 @@ function createContextMenus() {
     });
   }
 
+  // Add/Edit Note
+  browser.contextMenus.create({
+    id: 'annotatepro-edit-note',
+    parentId: 'annotatepro-parent',
+    title: 'Add/Edit Note',
+    contexts: ['all']
+  });
+
+  // Add Page Note
+  browser.contextMenus.create({
+    id: 'annotatepro-page-note',
+    parentId: 'annotatepro-parent',
+    title: 'Add Page Note',
+    contexts: ['page']
+  });
+
   // Separator
   browser.contextMenus.create({
     id: 'annotatepro-separator-1',
@@ -175,14 +229,6 @@ function createContextMenus() {
     id: 'annotatepro-checkbox',
     parentId: 'annotatepro-parent',
     title: 'Add Checkbox',
-    contexts: ['all']
-  });
-
-  // Add/Edit Note
-  browser.contextMenus.create({
-    id: 'annotatepro-edit-note',
-    parentId: 'annotatepro-parent',
-    title: 'Add/Edit Note',
     contexts: ['all']
   });
 
@@ -225,8 +271,9 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (menuId === 'annotatepro-checkbox') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CHECKBOX' });
   } else if (menuId === 'annotatepro-edit-note') {
-    console.log('AnnotatePro: Sending COMMAND_EDIT_NOTE to tab', tab.id);
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_EDIT_NOTE' });
+  } else if (menuId === 'annotatepro-page-note') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_PAGE_NOTE' });
   } else if (menuId === 'annotatepro-remove') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_REMOVE' });
   } else if (menuId === 'annotatepro-clear-page') {
@@ -238,7 +285,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 /**
  * Initialize database and context menus on install
  */
-browser.runtime.onInstalled.addListener(async (details) => {
+browser.runtime.onInstalled.addListener(async () => {
   await db.open();
   createContextMenus();
   console.log('AnnotatePro: Extension installed/updated, context menus created');

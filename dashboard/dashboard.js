@@ -79,7 +79,7 @@
     card.className = 'page-card';
     card.dataset.url = page.pageUrl;
 
-    const totalCount = page.highlightCount + page.checkboxCount;
+    const totalCount = page.highlightCount + page.checkboxCount + (page.pageNoteCount || 0);
     const domain = getDomain(page.pageUrl);
 
     card.innerHTML = `
@@ -99,6 +99,7 @@
         <div class="page-stats">
           ${page.highlightCount > 0 ? `<span class="page-stat highlight-stat">${page.highlightCount} highlights</span>` : ''}
           ${page.checkboxCount > 0 ? `<span class="page-stat checkbox-stat">${page.checkedCount || 0}/${page.checkboxCount} checked</span>` : ''}
+          ${page.pageNoteCount > 0 ? `<span class="page-stat pagenote-stat">${page.pageNoteCount} page note${page.pageNoteCount > 1 ? 's' : ''}</span>` : ''}
         </div>
         <div class="page-meta">
           <span class="page-time">${formatRelativeTime(page.lastUpdated)}</span>
@@ -144,6 +145,13 @@
   async function showPageAnnotations(page) {
     const annotations = await sendMessage('GET_PAGE_ANNOTATIONS', { pageUrl: page.pageUrl });
 
+    // Sort annotations: page notes first, then by updated time
+    const sortedAnnotations = [...annotations].sort((a, b) => {
+      if (a.annotationType === 'page-note' && b.annotationType !== 'page-note') return -1;
+      if (a.annotationType !== 'page-note' && b.annotationType === 'page-note') return 1;
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
+
     // Create modal
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -155,21 +163,21 @@
         </div>
         <div class="modal-body">
           <div class="annotation-list">
-            ${annotations.map(a => `
+            ${sortedAnnotations.map(a => `
               <div class="annotation-item ${a.annotationType}" data-id="${a.id}">
                 ${a.annotationType === 'checkbox'
                   ? `<input type="checkbox" class="annotation-checkbox" ${a.checked ? 'checked' : ''} data-id="${a.id}">`
-                  : `<div class="annotation-type-badge">🖍️</div>`
+                  : `<div class="annotation-type-badge">${a.annotationType === 'page-note' ? '📄' : '🖍️'}</div>`
                 }
                 <div class="annotation-content clickable" data-annotation='${escapeAttr(JSON.stringify(a))}'>
-                  <p class="annotation-text">${escapeHtml(truncate(a.textSnapshot || '(element)', 100))}</p>
+                  <p class="annotation-text">${escapeHtml(truncate(a.annotationType === 'page-note' ? 'Page Note' : (a.textSnapshot || '(element)'), 100))}</p>
                   <span class="annotation-time">${formatRelativeTime(a.updatedAt)}</span>
                 </div>
                 ${a.note && a.note.trim() ? '<span class="annotation-note-icon" title="Has note">📝</span>' : ''}
                 <button class="annotation-delete" title="Delete">&times;</button>
               </div>
             `).join('')}
-            ${annotations.length === 0 ? '<p class="no-annotations">No annotations on this page.</p>' : ''}
+            ${sortedAnnotations.length === 0 ? '<p class="no-annotations">No annotations on this page.</p>' : ''}
           </div>
         </div>
       </div>
@@ -317,34 +325,40 @@
     const detailModal = document.createElement('div');
     detailModal.className = 'modal-overlay detail-modal-overlay';
 
-    const typeLabel = annotation.annotationType === 'checkbox' ? 'Checkbox' : 'Highlight';
+    const isPageNote = annotation.annotationType === 'page-note';
+    const isCheckbox = annotation.annotationType === 'checkbox';
+    const typeLabel = isPageNote ? 'Page Note' : (isCheckbox ? 'Checkbox' : 'Highlight');
     const intentLabel = annotation.intent && annotation.intent !== 'DEFAULT' ? ` (${annotation.intent})` : '';
+    const modalTypeClass = isPageNote ? 'page-note-modal' : (isCheckbox ? 'checkbox-modal' : 'highlight-modal');
 
     detailModal.innerHTML = `
-      <div class="modal detail-modal">
-        <div class="modal-header">
+      <div class="modal detail-modal annotation-detail-modal ${modalTypeClass}">
+        <div class="modal-header annotation-detail-header ${modalTypeClass}-header">
           <h2>${typeLabel}${intentLabel}</h2>
           <button class="modal-close">&times;</button>
         </div>
         <div class="modal-body">
+          ${!isPageNote ? `
           <div class="detail-section">
             <div class="detail-section-header">
-              <h3>Full Text</h3>
+              <h3>FULL TEXT</h3>
               ${annotation.textSnapshot ? '<button class="copy-btn" title="Copy to clipboard">Copy</button>' : ''}
             </div>
             <div class="detail-text-box">
               ${annotation.textSnapshot ? escapeHtml(annotation.textSnapshot) : '<em>(No text - element annotation)</em>'}
             </div>
           </div>
-          ${annotation.annotationType === 'checkbox' ? `
+          ` : ''}
+          ${isCheckbox ? `
           <div class="detail-section">
-            <h3>Status</h3>
+            <h3>STATUS</h3>
             <p>${annotation.checked ? '✅ Checked' : '⬜ Unchecked'}</p>
           </div>
           ` : ''}
+          ${!isPageNote ? `
           <div class="detail-section">
             <div class="detail-section-header">
-              <h3>Color</h3>
+              <h3>COLOR</h3>
               <span class="color-edit-status"></span>
             </div>
             <div class="detail-color-picker">
@@ -354,12 +368,13 @@
                         title="${c.name}"
                         style="background: ${c.value}"></button>
               `).join('')}
-              ${annotation.annotationType === 'checkbox' ? `<button class="detail-color-swatch detail-color-clear ${!annotation.color || annotation.color === 'transparent' ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
+              ${isCheckbox ? `<button class="detail-color-swatch detail-color-clear ${!annotation.color || annotation.color === 'transparent' ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
             </div>
           </div>
+          ` : ''}
           <div class="detail-section">
             <div class="detail-section-header">
-              <h3>Note</h3>
+              <h3>NOTE</h3>
               <span class="note-edit-status"></span>
             </div>
             <div class="note-toolbar">
@@ -367,17 +382,17 @@
               <button class="note-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
             </div>
             <textarea class="detail-note-textarea"
-                      placeholder="Add a note to this annotation..."
+                      placeholder="${isPageNote ? 'Write notes about this page...' : 'Add a note to this annotation...'}"
                       autocapitalize="sentences"
-                      rows="3">${escapeHtml(annotation.note || '')}</textarea>
+                      rows="4">${escapeHtml(annotation.note || '')}</textarea>
           </div>
           <div class="detail-section detail-timestamps">
             <div class="detail-timestamp">
-              <h3>Created</h3>
+              <h3>CREATED</h3>
               <p>${new Date(annotation.createdAt).toLocaleString()}</p>
             </div>
             <div class="detail-timestamp">
-              <h3>Last Updated</h3>
+              <h3>LAST UPDATED</h3>
               <p>${new Date(annotation.updatedAt).toLocaleString()}</p>
             </div>
           </div>
@@ -561,7 +576,7 @@
         filtered.sort((a, b) => b.lastUpdated - a.lastUpdated);
         break;
       case 'most':
-        filtered.sort((a, b) => (b.highlightCount + b.checkboxCount) - (a.highlightCount + a.checkboxCount));
+        filtered.sort((a, b) => (b.highlightCount + b.checkboxCount + (b.pageNoteCount || 0)) - (a.highlightCount + a.checkboxCount + (a.pageNoteCount || 0)));
         break;
       case 'alpha':
         filtered.sort((a, b) => a.title.localeCompare(b.title));
@@ -579,7 +594,7 @@
 
     // Update stats
     totalPagesEl.textContent = allPages.length;
-    const totalAnnotations = allPages.reduce((sum, p) => sum + p.highlightCount + p.checkboxCount, 0);
+    const totalAnnotations = allPages.reduce((sum, p) => sum + p.highlightCount + p.checkboxCount + (p.pageNoteCount || 0), 0);
     totalAnnotationsEl.textContent = totalAnnotations;
 
     // Clear existing cards (keep empty state)
@@ -723,6 +738,36 @@
   }
 
   /**
+   * Clear all data from the database
+   */
+  async function clearDatabase() {
+    const annotations = await sendMessage('GET_ALL_ANNOTATIONS');
+    const count = annotations.length;
+
+    if (count === 0) {
+      alert('Database is already empty.');
+      return;
+    }
+
+    const confirmMsg = `Are you sure you want to delete ALL ${count} annotations?\n\nThis action cannot be undone. All highlights, checkboxes, and notes will be permanently lost.\n\nTip: Click "Export" first to create a backup of your data.`;
+    if (!confirm(confirmMsg)) return;
+
+    // Double confirmation for safety
+    const doubleConfirm = confirm('This will permanently delete all your annotations. Are you absolutely sure?');
+    if (!doubleConfirm) return;
+
+    try {
+      await sendMessage('CLEAR_ALL_ANNOTATIONS');
+      alert('All annotations have been deleted.');
+      loadPages();
+      updateStorageInfo();
+    } catch (error) {
+      console.error('Failed to clear database:', error);
+      alert('Failed to clear database. Please try again.');
+    }
+  }
+
+  /**
    * Initialize
    */
   function init() {
@@ -753,19 +798,63 @@
       }
     });
 
+    // Clear database button
+    document.getElementById('btn-clear-db').addEventListener('click', clearDatabase);
+
     // Listen for messages from background script
     browser.runtime.onMessage.addListener((message) => {
-      if (message.type === 'REFRESH_DATA') {
-        loadPages();
-        updateStorageInfo();
-      } else if (message.type === 'CHECKBOX_UPDATED') {
-        // Update checkbox in modal if open
-        const checkbox = document.querySelector(`.annotation-checkbox[data-id="${message.annotationId}"]`);
-        if (checkbox) {
-          checkbox.checked = message.checked;
-        }
-        // Refresh page list to update counts
-        loadPages();
+      switch (message.type) {
+        case 'REFRESH_DATA':
+        case 'ANNOTATION_ADDED':
+        case 'ANNOTATION_DELETED':
+        case 'PAGE_CLEARED':
+        case 'ANNOTATIONS_IMPORTED':
+          loadPages();
+          updateStorageInfo();
+          break;
+
+        case 'ANNOTATION_UPDATED':
+          // Update specific UI elements without full refresh
+          if (message.annotationId && message.patch) {
+            // Update checkbox in modal if open
+            if (message.patch.checked !== undefined) {
+              const checkbox = document.querySelector(`.annotation-checkbox[data-id="${message.annotationId}"]`);
+              if (checkbox) {
+                checkbox.checked = message.patch.checked;
+              }
+            }
+            // Update note icon in modal if open
+            if (message.patch.note !== undefined) {
+              const annotationItem = document.querySelector(`.annotation-item[data-id="${message.annotationId}"]`);
+              if (annotationItem) {
+                let noteIcon = annotationItem.querySelector('.annotation-note-icon');
+                const hasNote = message.patch.note && message.patch.note.trim();
+                if (hasNote && !noteIcon) {
+                  noteIcon = document.createElement('span');
+                  noteIcon.className = 'annotation-note-icon';
+                  noteIcon.title = 'Has note';
+                  noteIcon.textContent = '📝';
+                  const deleteBtn = annotationItem.querySelector('.annotation-delete');
+                  if (deleteBtn) deleteBtn.before(noteIcon);
+                } else if (!hasNote && noteIcon) {
+                  noteIcon.remove();
+                }
+              }
+            }
+            // Refresh page list to update counts (for checkbox state changes)
+            loadPages();
+          }
+          break;
+
+        case 'CHECKBOX_UPDATED':
+          // Update checkbox in modal if open
+          const checkbox = document.querySelector(`.annotation-checkbox[data-id="${message.annotationId}"]`);
+          if (checkbox) {
+            checkbox.checked = message.checked;
+          }
+          // Refresh page list to update counts
+          loadPages();
+          break;
       }
     });
 

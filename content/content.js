@@ -389,7 +389,8 @@
       return existing;
     }
 
-    const highlightColor = color || INTENT_COLORS[intent] || INTENT_COLORS.DEFAULT;
+    const hasTransparentColor = color === 'transparent';
+    const highlightColor = hasTransparentColor ? 'transparent' : (color || INTENT_COLORS[intent] || INTENT_COLORS.DEFAULT);
 
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let node;
@@ -416,8 +417,15 @@
           const wrapper = document.createElement('mark');
           wrapper.setAttribute('data-annotatepro-id', id);
           wrapper.setAttribute('data-annotatepro-type', 'highlight');
-          wrapper.classList.add('annotatepro-highlight', 'annotatepro-text-highlight');
-          wrapper.style.setProperty('--annotatepro-color', highlightColor);
+          wrapper.classList.add('annotatepro-text-highlight');
+
+          // Only add highlight class and background if not transparent
+          if (hasTransparentColor) {
+            wrapper.style.cssText = 'background: transparent !important; background-color: transparent !important; color: inherit !important; position: relative;';
+          } else {
+            wrapper.classList.add('annotatepro-highlight');
+            wrapper.style.setProperty('--annotatepro-color', highlightColor);
+          }
 
           const range = document.createRange();
           range.setStart(node, match.start);
@@ -534,12 +542,8 @@
           // Insert checkbox at the beginning of the wrapper
           wrapper.insertBefore(checkbox, wrapper.firstChild);
 
-          // Also set wrapper inline styles as backup (include background color if not transparent)
-          if (hasTransparentColor) {
-            wrapper.style.cssText = 'position: relative !important; display: inline-block !important; padding-left: 22px !important;';
-          } else {
-            wrapper.style.cssText = `position: relative !important; display: inline-block !important; padding-left: 22px !important; background-color: var(--annotatepro-color, ${checkboxColor}) !important; border-radius: 2px;`;
-          }
+          // Set wrapper inline styles - let CSS gradient handle the background
+          wrapper.style.cssText = `position: relative !important; display: inline-block !important; padding-left: 22px !important; --annotatepro-color: ${checkboxColor};`;
           return checkbox;
         } catch (err) {
           console.error('AnnotatePro: Failed to wrap text for checkbox:', err);
@@ -680,7 +684,7 @@
   }
 
   /**
-   * Update note badge on annotation element (plain purple circle, no icon)
+   * Update note badge on annotation element (purple circle at bottom-right)
    */
   function updateNoteBadge(annotationId, hasNote) {
     const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotationId}"]`);
@@ -693,10 +697,10 @@
       if (!badge) {
         badge = document.createElement('span');
         badge.className = 'annotatepro-note-badge';
-        // No text content - just the purple circle
+        badge.setAttribute('data-annotation-id', annotationId);
         annotatedEl.appendChild(badge);
 
-        // Add hover listeners for tooltip
+        // Add hover listeners for tooltip preview
         badge.addEventListener('mouseenter', (e) => {
           const annotation = annotationDataMap.get(annotationId);
           if (annotation?.note) {
@@ -705,6 +709,17 @@
         });
         badge.addEventListener('mouseleave', () => {
           hideNoteTooltip();
+        });
+
+        // Add click listener to open the note modal
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          hideNoteTooltip();
+          const annotation = annotationDataMap.get(annotationId);
+          if (annotation) {
+            createNoteModal(annotation);
+          }
         });
       }
       annotatedEl.setAttribute('data-has-note', 'true');
@@ -935,6 +950,456 @@
     clearTimeout(saveDebounceTimer);
   }
 
+  // ============ Note Modal (Large View) ============
+
+  let activeNoteModal = null;
+  let modalSaveTimer = null;
+
+  function createNoteModal(annotation) {
+    // Remove any existing modal or editor
+    removeNoteModal();
+    removeNoteEditor();
+
+    const currentColor = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
+    const isCheckbox = annotation.annotationType === 'checkbox';
+    const hasNoColor = !annotation.color || annotation.color === 'transparent';
+    const snippetText = annotation.textSnapshot || '(element annotation)';
+    const modalTypeClass = isCheckbox ? 'annotatepro-checkbox-modal' : 'annotatepro-highlight-modal';
+    const typeLabel = isCheckbox ? 'Checkbox' : 'Highlight';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'annotatepro-note-modal-overlay';
+
+    overlay.innerHTML = `
+      <div class="annotatepro-note-modal ${modalTypeClass}">
+        <div class="annotatepro-note-modal-header ${modalTypeClass}-header">
+          <h2>${typeLabel}</h2>
+          <span class="annotatepro-note-modal-status"></span>
+          <button class="annotatepro-note-modal-close" title="Close">&times;</button>
+        </div>
+        <div class="annotatepro-note-modal-snippet">${escapeHtml(snippetText.length > 150 ? snippetText.slice(0, 150) + '...' : snippetText)}</div>
+        <div class="annotatepro-note-modal-colors">
+          <span class="annotatepro-note-modal-colors-label">Color:</span>
+          ${COLOR_PRESETS.map(c => `
+            <button class="annotatepro-note-modal-color ${c.value === currentColor ? 'active' : ''}"
+                    data-color="${c.value}"
+                    title="${c.name}"
+                    style="background: ${c.value}"></button>
+          `).join('')}
+          <button class="annotatepro-note-modal-color annotatepro-note-modal-color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="Clear color">&times;</button>
+        </div>
+        <div class="annotatepro-note-modal-toolbar">
+          <button class="annotatepro-note-modal-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+          <button class="annotatepro-note-modal-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+        </div>
+        <div class="annotatepro-note-modal-body">
+          <textarea class="annotatepro-note-modal-textarea"
+                    placeholder="Write your note here..."
+                    autocapitalize="sentences">${escapeHtml(annotation.note || '')}</textarea>
+        </div>
+        <div class="annotatepro-note-modal-footer">
+          <span class="annotatepro-note-modal-hint">Auto-saves as you type</span>
+          <div class="annotatepro-note-modal-actions">
+            <button class="annotatepro-note-modal-btn annotatepro-note-modal-btn-secondary close-btn">Done</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    activeNoteModal = { overlay, annotation, originalNote: annotation.note || '' };
+
+    // Setup event listeners
+    setupNoteModalListeners(overlay, annotation);
+
+    // Focus the textarea
+    const textarea = overlay.querySelector('.annotatepro-note-modal-textarea');
+    setupAutoCapitalize(textarea);
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+    return overlay;
+  }
+
+  function removeNoteModal() {
+    if (activeNoteModal) {
+      activeNoteModal.overlay.remove();
+      activeNoteModal = null;
+    }
+    clearTimeout(modalSaveTimer);
+  }
+
+  function setupNoteModalListeners(overlay, annotation) {
+    const modal = overlay.querySelector('.annotatepro-note-modal');
+    const textarea = overlay.querySelector('.annotatepro-note-modal-textarea');
+    const closeBtn = overlay.querySelector('.annotatepro-note-modal-close');
+    const doneBtn = overlay.querySelector('.close-btn');
+    const statusEl = overlay.querySelector('.annotatepro-note-modal-status');
+
+    // Color swatch click handlers
+    overlay.querySelectorAll('.annotatepro-note-modal-color').forEach(swatch => {
+      swatch.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const newColor = swatch.dataset.color;
+
+        // Update active state
+        overlay.querySelectorAll('.annotatepro-note-modal-color').forEach(s => s.classList.remove('active'));
+        swatch.classList.add('active');
+
+        // Update annotation color
+        try {
+          statusEl.textContent = 'Saving...';
+          await sendMessage(MessageType.UPDATE_ANNOTATION, {
+            id: annotation.id,
+            patch: { color: newColor }
+          });
+
+          annotation.color = newColor;
+
+          // Update the element on the page
+          const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotation.id}"]`);
+          if (annotatedEl) {
+            if (newColor === 'transparent') {
+              annotatedEl.style.removeProperty('--annotatepro-color');
+              annotatedEl.style.backgroundColor = 'transparent';
+            } else {
+              annotatedEl.style.setProperty('--annotatepro-color', newColor);
+              if (annotatedEl.classList.contains('annotatepro-checkbox-text')) {
+                annotatedEl.style.backgroundColor = newColor;
+              }
+            }
+          }
+
+          statusEl.textContent = 'Saved';
+          setTimeout(() => { statusEl.textContent = ''; }, 1500);
+        } catch (err) {
+          statusEl.textContent = 'Error';
+          console.error('AnnotatePro: Failed to save color', err);
+        }
+      });
+    });
+
+    // Toolbar button handlers
+    overlay.querySelectorAll('.annotatepro-note-modal-toolbar-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.action;
+        insertNoteFormat(textarea, action);
+        textarea.focus();
+      });
+    });
+
+    // Auto-save on input with debounce
+    textarea.addEventListener('input', () => {
+      statusEl.textContent = 'Saving...';
+
+      clearTimeout(modalSaveTimer);
+      modalSaveTimer = setTimeout(async () => {
+        try {
+          await sendMessage(MessageType.UPDATE_ANNOTATION, {
+            id: annotation.id,
+            patch: { note: textarea.value }
+          });
+          statusEl.textContent = 'Saved';
+          if (activeNoteModal) {
+            activeNoteModal.originalNote = textarea.value;
+          }
+          annotation.note = textarea.value;
+          updateNoteBadge(annotation.id, !!(textarea.value && textarea.value.trim()));
+        } catch (err) {
+          statusEl.textContent = 'Error';
+          console.error('AnnotatePro: Failed to save note', err);
+        }
+      }, 500);
+    });
+
+    // Close button
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeNoteModal();
+    });
+
+    // Done button
+    doneBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeNoteModal();
+    });
+
+    // Click outside modal to close
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        removeNoteModal();
+      }
+    });
+
+    // Prevent modal content clicks from closing
+    modal.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    // Escape to close
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        removeNoteModal();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+  }
+
+  // ============ Page Note Functionality ============
+
+  let pageNoteBubble = null;
+  let pageNoteTooltip = null;
+  let pageNoteData = null; // Stores the page note annotation
+
+  /**
+   * Create or update the page note bubble at bottom-right of page
+   */
+  function updatePageNoteBubble() {
+    if (pageNoteData && pageNoteData.note && pageNoteData.note.trim()) {
+      // Show bubble if there's a page note
+      if (!pageNoteBubble) {
+        createPageNoteBubble();
+      }
+    } else {
+      // Remove bubble if no page note
+      if (pageNoteBubble) {
+        pageNoteBubble.remove();
+        pageNoteBubble = null;
+      }
+    }
+  }
+
+  /**
+   * Create the page note bubble element
+   */
+  function createPageNoteBubble() {
+    if (pageNoteBubble) return;
+
+    pageNoteBubble = document.createElement('div');
+    pageNoteBubble.className = 'annotatepro-page-note-bubble';
+    pageNoteBubble.title = 'Page Note';
+
+    document.body.appendChild(pageNoteBubble);
+
+    // Hover to show tooltip preview
+    pageNoteBubble.addEventListener('mouseenter', () => {
+      if (pageNoteData?.note) {
+        showPageNoteTooltip(pageNoteData.note);
+      }
+    });
+
+    pageNoteBubble.addEventListener('mouseleave', () => {
+      hidePageNoteTooltip();
+    });
+
+    // Click to open page note modal
+    pageNoteBubble.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hidePageNoteTooltip();
+      openPageNoteModal();
+    });
+  }
+
+  /**
+   * Show tooltip preview of page note
+   */
+  function showPageNoteTooltip(noteText) {
+    hidePageNoteTooltip();
+
+    pageNoteTooltip = document.createElement('div');
+    pageNoteTooltip.className = 'annotatepro-page-note-tooltip';
+
+    const displayText = noteText.length > 150 ? noteText.slice(0, 150) + '...' : noteText;
+    pageNoteTooltip.innerHTML = renderFormattedNote(displayText);
+
+    document.body.appendChild(pageNoteTooltip);
+
+    // Make visible
+    requestAnimationFrame(() => {
+      pageNoteTooltip.classList.add('visible');
+    });
+  }
+
+  /**
+   * Hide page note tooltip
+   */
+  function hidePageNoteTooltip() {
+    if (pageNoteTooltip) {
+      pageNoteTooltip.remove();
+      pageNoteTooltip = null;
+    }
+  }
+
+  /**
+   * Load page note from storage
+   */
+  async function loadPageNote() {
+    try {
+      const pageUrl = getPageUrl();
+      const annotations = await sendMessage(MessageType.GET_PAGE_ANNOTATIONS, { pageUrl });
+
+      // Find page note (annotationType === 'page-note')
+      pageNoteData = annotations.find(a => a.annotationType === 'page-note') || null;
+      updatePageNoteBubble();
+    } catch (error) {
+      console.error('AnnotatePro: Failed to load page note', error);
+    }
+  }
+
+  /**
+   * Create or update page note
+   */
+  async function savePageNote(noteText) {
+    const pageUrl = getPageUrl();
+
+    if (pageNoteData) {
+      // Update existing page note
+      await sendMessage(MessageType.UPDATE_ANNOTATION, {
+        id: pageNoteData.id,
+        patch: { note: noteText }
+      });
+      pageNoteData.note = noteText;
+    } else {
+      // Create new page note
+      const annotation = {
+        elementFingerprint: `page-note_${hashText(pageUrl)}`,
+        selector: 'body',
+        tagName: 'body',
+        className: '',
+        textSnapshot: 'Page Note',
+        textHash: hashText('Page Note'),
+        contextBefore: '',
+        contextAfter: '',
+        pageUrl: pageUrl,
+        annotationType: 'page-note',
+        note: noteText,
+        color: null,
+        intent: null
+      };
+
+      pageNoteData = await sendMessage(MessageType.ADD_ANNOTATION, annotation);
+    }
+
+    updatePageNoteBubble();
+  }
+
+  /**
+   * Open page note modal for editing
+   */
+  function openPageNoteModal() {
+    removeNoteModal();
+    removeNoteEditor();
+
+    const noteText = pageNoteData?.note || '';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'annotatepro-note-modal-overlay';
+
+    overlay.innerHTML = `
+      <div class="annotatepro-note-modal">
+        <div class="annotatepro-note-modal-header">
+          <h2>Page Note</h2>
+          <span class="annotatepro-note-modal-status"></span>
+          <button class="annotatepro-note-modal-close" title="Close">&times;</button>
+        </div>
+        <div class="annotatepro-note-modal-snippet">Notes for this page</div>
+        <div class="annotatepro-note-modal-toolbar">
+          <button class="annotatepro-note-modal-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+          <button class="annotatepro-note-modal-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+        </div>
+        <div class="annotatepro-note-modal-body">
+          <textarea class="annotatepro-note-modal-textarea"
+                    placeholder="Write notes about this page..."
+                    autocapitalize="sentences">${escapeHtml(noteText)}</textarea>
+        </div>
+        <div class="annotatepro-note-modal-footer">
+          <span class="annotatepro-note-modal-hint">Auto-saves as you type</span>
+          <div class="annotatepro-note-modal-actions">
+            <button class="annotatepro-note-modal-btn annotatepro-note-modal-btn-secondary close-btn">Done</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const modal = overlay.querySelector('.annotatepro-note-modal');
+    const textarea = overlay.querySelector('.annotatepro-note-modal-textarea');
+    const closeBtn = overlay.querySelector('.annotatepro-note-modal-close');
+    const doneBtn = overlay.querySelector('.close-btn');
+    const statusEl = overlay.querySelector('.annotatepro-note-modal-status');
+
+    // Toolbar button handlers
+    overlay.querySelectorAll('.annotatepro-note-modal-toolbar-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.action;
+        insertNoteFormat(textarea, action);
+        textarea.focus();
+      });
+    });
+
+    // Auto-save with debounce
+    let saveTimer;
+    textarea.addEventListener('input', () => {
+      statusEl.textContent = 'Saving...';
+
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        try {
+          await savePageNote(textarea.value);
+          statusEl.textContent = 'Saved';
+          setTimeout(() => { statusEl.textContent = ''; }, 1500);
+        } catch (err) {
+          statusEl.textContent = 'Error';
+          console.error('AnnotatePro: Failed to save page note', err);
+        }
+      }, 500);
+    });
+
+    // Close handlers
+    const closeModal = () => {
+      clearTimeout(saveTimer);
+      overlay.remove();
+    };
+
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+
+    doneBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeModal();
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        closeModal();
+      }
+    });
+
+    modal.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    // Escape to close
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        closeModal();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+
+    // Focus textarea
+    setupAutoCapitalize(textarea);
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }
+
   function setupNoteEditorListeners(editor, annotation) {
     const textarea = editor.querySelector('.annotatepro-note-textarea');
     const closeBtn = editor.querySelector('.annotatepro-note-close');
@@ -966,14 +1431,9 @@
           const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotation.id}"]`);
           if (annotatedEl) {
             if (newColor === 'transparent') {
-              annotatedEl.style.removeProperty('--annotatepro-color');
-              annotatedEl.style.backgroundColor = 'transparent';
+              annotatedEl.style.setProperty('--annotatepro-color', 'transparent');
             } else {
               annotatedEl.style.setProperty('--annotatepro-color', newColor);
-              // For checkbox wrappers, also update background-color directly
-              if (annotatedEl.classList.contains('annotatepro-checkbox-text')) {
-                annotatedEl.style.backgroundColor = newColor;
-              }
             }
           }
 
@@ -1115,7 +1575,7 @@
     }
   }
 
-  async function createHighlight(intent = 'DEFAULT') {
+  async function createHighlight(intent = 'DEFAULT', color = null) {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) {
       return null;
@@ -1129,7 +1589,7 @@
       pageUrl: getPageUrl(),
       annotationType: 'highlight',
       intent,
-      color: null,
+      color: color,
       note: ''
     };
 
@@ -1169,7 +1629,8 @@
       pageUrl: getPageUrl(),
       annotationType: 'checkbox',
       checked: false,
-      note: ''
+      note: '',
+      color: 'transparent'
     };
 
     try {
@@ -1200,7 +1661,8 @@
       pageUrl: getPageUrl(),
       annotationType: 'checkbox',
       checked: false,
-      note: ''
+      note: '',
+      color: 'transparent'
     };
 
     try {
@@ -1215,9 +1677,8 @@
         wrapper.setAttribute('data-annotatepro-id', saved.id);
         wrapper.setAttribute('data-annotatepro-type', 'checkbox');
         wrapper.classList.add('annotatepro-checkbox-text');
-        // Set default color using CSS variable for future color changes
-        wrapper.style.setProperty('--annotatepro-color', INTENT_COLORS.DEFAULT);
-        wrapper.style.cssText = `position: relative !important; display: inline-block !important; padding-left: 22px !important; background-color: var(--annotatepro-color, ${INTENT_COLORS.DEFAULT}) !important; border-radius: 2px;`;
+        // Default to no background color for checkboxes
+        wrapper.style.cssText = `position: relative !important; display: inline-block !important; padding-left: 22px !important; border-radius: 2px;`;
 
         // Wrap the selected range directly
         range.surroundContents(wrapper);
@@ -1309,19 +1770,23 @@
       annotatedEl.addEventListener('click', (e) => {
         // Don't trigger on checkbox input clicks
         if (e.target.classList.contains('annotatepro-checkbox')) return;
+        // Don't trigger on badge clicks (handled separately)
+        if (e.target.classList.contains('annotatepro-note-badge')) return;
         // Don't trigger if user is selecting text
         const selection = window.getSelection();
         if (selection && !selection.isCollapsed) return;
 
         e.stopPropagation();
-        createNoteEditor(annotation, annotatedEl);
+        createNoteModal(annotation);
       });
     }
 
     element.addEventListener('contextmenu', (e) => {
       if (e.shiftKey) {
         e.preventDefault();
-        deleteAnnotation(annotation.id);
+        if (confirm('Delete this annotation?')) {
+          deleteAnnotation(annotation.id);
+        }
       }
     });
   }
@@ -1461,7 +1926,9 @@
         if (lastContextMenuTarget) {
           const annotationId = findAnnotationId(lastContextMenuTarget);
           if (annotationId) {
-            deleteAnnotation(annotationId);
+            if (confirm('Delete this annotation?')) {
+              deleteAnnotation(annotationId);
+            }
           }
         }
         break;
@@ -1477,7 +1944,9 @@
 
       case 'COMMAND_DELETE_BY_ID':
         if (message.annotationId) {
-          deleteAnnotation(message.annotationId);
+          if (confirm('Delete this annotation?')) {
+            deleteAnnotation(message.annotationId);
+          }
         }
         break;
 
@@ -1507,14 +1976,9 @@
           const colorEl = document.querySelector(`[data-annotatepro-id="${message.annotationId}"]`);
           if (colorEl) {
             if (message.color === 'transparent') {
-              colorEl.style.removeProperty('--annotatepro-color');
-              colorEl.style.backgroundColor = 'transparent';
+              colorEl.style.setProperty('--annotatepro-color', 'transparent');
             } else {
               colorEl.style.setProperty('--annotatepro-color', message.color);
-              // For checkbox wrappers, also update background-color directly
-              if (colorEl.classList.contains('annotatepro-checkbox-text')) {
-                colorEl.style.backgroundColor = message.color;
-              }
             }
           }
         }
@@ -1537,15 +2001,12 @@
 
       case 'COMMAND_EDIT_NOTE':
         (async () => {
-          // First, check if there's selected text - create highlight + open note
+          // First, check if there's selected text - create annotation with note (no highlight by default)
           const selection = window.getSelection();
           if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
-            const saved = await createHighlight('DEFAULT');
+            const saved = await createHighlight('DEFAULT', 'transparent');
             if (saved) {
-              const annotatedEl = document.querySelector(`[data-annotatepro-id="${saved.id}"]`);
-              if (annotatedEl) {
-                createNoteEditor(saved, annotatedEl);
-              }
+              createNoteModal(saved);
             }
             return;
           }
@@ -1563,14 +2024,102 @@
                 }
               }
               if (annotationData) {
-                const annotatedEl = document.querySelector(`[data-annotatepro-id="${noteAnnotationId}"]`);
-                if (annotatedEl) {
-                  createNoteEditor(annotationData, annotatedEl);
-                }
+                createNoteModal(annotationData);
               }
             }
           }
         })();
+        break;
+
+      case 'COMMAND_PAGE_NOTE':
+        openPageNoteModal();
+        break;
+
+      // ============ Realtime Sync Messages ============
+
+      case 'ANNOTATION_ADDED':
+        // Another source (popup, dashboard, other tab) added an annotation to this page
+        if (message.annotation) {
+          // Handle page notes separately
+          if (message.annotation.annotationType === 'page-note') {
+            pageNoteData = message.annotation;
+            updatePageNoteBubble();
+          } else if (!attachedAnnotations.has(message.annotation.id)) {
+            const match = reattach(message.annotation);
+            if (match) {
+              applyAnnotation(match.element, message.annotation);
+              attachedAnnotations.add(message.annotation.id);
+              setupAnnotationListeners(match.element, message.annotation);
+            }
+          }
+        }
+        break;
+
+      case 'ANNOTATION_UPDATED':
+        if (message.annotationId && message.patch) {
+          // Check if this is a page note update
+          if (pageNoteData && pageNoteData.id === message.annotationId) {
+            Object.assign(pageNoteData, message.patch);
+            updatePageNoteBubble();
+            break;
+          }
+
+          // Update local annotation data
+          const existingAnnotation = annotationDataMap.get(message.annotationId);
+          if (existingAnnotation) {
+            Object.assign(existingAnnotation, message.patch);
+          }
+
+          // Handle specific patch updates
+          if (message.patch.color !== undefined) {
+            const colorEl = document.querySelector(`[data-annotatepro-id="${message.annotationId}"]`);
+            if (colorEl) {
+              if (message.patch.color === 'transparent') {
+                colorEl.style.setProperty('--annotatepro-color', 'transparent');
+              } else {
+                colorEl.style.setProperty('--annotatepro-color', message.patch.color);
+              }
+            }
+          }
+
+          if (message.patch.note !== undefined) {
+            updateNoteBadge(message.annotationId, !!(message.patch.note && message.patch.note.trim()));
+          }
+
+          if (message.patch.checked !== undefined) {
+            const checkboxEl = document.querySelector(`[data-annotatepro-checkbox-id="${message.annotationId}"]`);
+            if (checkboxEl) {
+              checkboxEl.checked = message.patch.checked;
+            }
+          }
+        }
+        break;
+
+      case 'ANNOTATION_DELETED':
+        if (message.annotationId) {
+          // Check if deleted annotation is the page note
+          if (pageNoteData && pageNoteData.id === message.annotationId) {
+            pageNoteData = null;
+            updatePageNoteBubble();
+          } else {
+            removeAnnotation(message.annotationId);
+            attachedAnnotations.delete(message.annotationId);
+            annotationDataMap.delete(message.annotationId);
+          }
+        }
+        break;
+
+      case 'PAGE_CLEARED':
+        clearAllAnnotationsFromDOM();
+        // Also clear page note
+        pageNoteData = null;
+        updatePageNoteBubble();
+        break;
+
+      case 'DATABASE_CLEARED':
+        clearAllAnnotationsFromDOM();
+        pageNoteData = null;
+        updatePageNoteBubble();
         break;
     }
   });
@@ -1654,6 +2203,7 @@
     setupKeyboardShortcuts();
     setupMutationObserver();
     await loadAnnotations();
+    await loadPageNote();
 
     console.log('AnnotatePro: Content script initialized');
   }

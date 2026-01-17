@@ -141,6 +141,16 @@ body {
   color: #22c55e;
 }
 
+.toolbar-btn-danger {
+  color: #dc2626 !important;
+  border-color: #fecaca !important;
+}
+
+.toolbar-btn-danger:hover {
+  background: #fef2f2 !important;
+  border-color: #f87171 !important;
+}
+
 /* Page List */
 .page-list {
   display: grid;
@@ -242,6 +252,11 @@ body {
 .checkbox-stat {
   background: #d4edda;
   color: #155724;
+}
+
+.pagenote-stat {
+  background: #ede9fe;
+  color: #5b21b6;
 }
 
 .page-time {
@@ -346,6 +361,7 @@ body {
   display: flex;
   flex-direction: column;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
 }
 
 .modal-header {
@@ -354,6 +370,7 @@ body {
   align-items: center;
   padding: 20px 24px;
   border-bottom: 1px solid #e0e0e0;
+  border-radius: 16px 16px 0 0;
 }
 
 .modal-header h2 {
@@ -405,6 +422,10 @@ body {
 
 .annotation-item.checkbox {
   border-left: 3px solid #22c55e;
+}
+
+.annotation-item.page-note {
+  border-left: 3px solid #8b5cf6;
 }
 
 .annotation-type-badge {
@@ -515,6 +536,15 @@ body {
   .toolbar-btn:hover {
     background: #333;
     border-color: #6366f1;
+  }
+
+  .toolbar-btn-danger {
+    border-color: #7f1d1d !important;
+  }
+
+  .toolbar-btn-danger:hover {
+    background: #450a0a !important;
+    border-color: #991b1b !important;
   }
 
   .view-btn {
@@ -817,6 +847,89 @@ body {
   color: #888;
 }
 
+/* ============ Annotation Detail Modal Styling ============ */
+.annotation-detail-modal {
+  max-width: 500px;
+  min-height: 400px;
+}
+
+.annotation-detail-modal .modal-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.page-note-modal .detail-section:first-child {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-note-modal .detail-section:first-child .detail-note-textarea {
+  flex: 1;
+  min-height: 150px;
+}
+
+.annotation-detail-header {
+  border-bottom: none !important;
+}
+
+.annotation-detail-header h2 {
+  color: white !important;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annotation-detail-header h2::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+  opacity: 0.9;
+}
+
+.annotation-detail-header .modal-close {
+  background: rgba(255, 255, 255, 0.2) !important;
+  color: white !important;
+}
+
+.annotation-detail-header .modal-close:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
+}
+
+.annotation-detail-modal .detail-section h3 {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.annotation-detail-modal .detail-timestamps h3 {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.annotation-detail-modal .detail-timestamps p {
+  font-size: 13px;
+}
+
+/* Highlight Modal - Yellow/Orange header */
+.highlight-modal-header {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+}
+
+/* Checkbox Modal - Green header */
+.checkbox-modal-header {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
+}
+
+/* Page Note Modal - Purple header */
+.page-note-modal-header {
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%) !important;
+}
+
 /* Dark mode for detail modal */
 @media (prefers-color-scheme: dark) {
   .annotation-content.clickable:hover {
@@ -907,5 +1020,30 @@ body {
     background: #1a3a1a;
     border-color: #28a745;
     color: #6fcf6f;
+  }
+
+  /* Annotation detail modal dark mode */
+  .annotation-detail-modal .detail-section h3 {
+    color: #9ca3af;
+  }
+
+  .annotation-detail-modal .detail-timestamps h3 {
+    color: #9ca3af;
+  }
+
+  .annotation-detail-modal .detail-timestamps p {
+    color: #e5e7eb;
+  }
+
+  .highlight-modal-header {
+    background: linear-gradient(135deg, #d97706 0%, #b45309 100%) !important;
+  }
+
+  .checkbox-modal-header {
+    background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
+  }
+
+  .page-note-modal-header {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%) !important;
   }
 }

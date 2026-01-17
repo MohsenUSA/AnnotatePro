@@ -66,18 +66,26 @@ function renderAnnotationList() {
 
   emptyEl.style.display = 'none';
 
-  for (const annotation of pageAnnotations) {
+  // Sort annotations: page notes first, then by updated time
+  const sortedAnnotations = [...pageAnnotations].sort((a, b) => {
+    if (a.annotationType === 'page-note' && b.annotationType !== 'page-note') return -1;
+    if (a.annotationType !== 'page-note' && b.annotationType === 'page-note') return 1;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
+
+  for (const annotation of sortedAnnotations) {
     const item = document.createElement('div');
     item.className = 'annotation-item';
     item.dataset.id = annotation.id;
 
+    const isPageNote = annotation.annotationType === 'page-note';
     const color = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
-    const text = annotation.textSnapshot || '(no text)';
+    const text = isPageNote ? 'Page Note' : (annotation.textSnapshot || '(no text)');
     const isCheckbox = annotation.annotationType === 'checkbox';
     const hasNote = annotation.note && annotation.note.trim().length > 0;
 
     item.innerHTML = `
-      <span class="annotation-color" style="background: ${color}"></span>
+      ${isPageNote ? '<span class="annotation-icon">📄</span>' : `<span class="annotation-color" style="background: ${color}"></span>`}
       <div class="annotation-main">
         <span class="annotation-text" title="${escapeHtml(text)}">${escapeHtml(text.slice(0, 50))}${text.length > 50 ? '...' : ''}</span>
         ${hasNote ? '<span class="annotation-note-indicator" title="Has note">📝</span>' : ''}
@@ -141,12 +149,14 @@ function toggleNoteEditor(item, annotation) {
 
   const currentColor = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
   const isCheckbox = annotation.annotationType === 'checkbox';
+  const isPageNote = annotation.annotationType === 'page-note';
   const hasNoColor = !annotation.color || annotation.color === 'transparent';
 
   // Create editor
   const editorEl = document.createElement('div');
   editorEl.className = 'annotation-note-editor';
   editorEl.innerHTML = `
+    ${!isPageNote ? `
     <div class="color-picker">
       ${COLOR_PRESETS.map(c => `
         <button class="color-swatch ${c.value === currentColor ? 'active' : ''}"
@@ -156,6 +166,7 @@ function toggleNoteEditor(item, annotation) {
       `).join('')}
       ${isCheckbox ? `<button class="color-swatch color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
     </div>
+    ` : ''}
     <div class="note-toolbar">
       <button class="note-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
       <button class="note-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
@@ -406,9 +417,11 @@ async function updateStats() {
 
     const highlights = pageAnnotations.filter(a => a.annotationType === 'highlight').length;
     const checkboxes = pageAnnotations.filter(a => a.annotationType === 'checkbox').length;
+    const pageNotes = pageAnnotations.filter(a => a.annotationType === 'page-note').length;
 
     document.getElementById('page-highlights').textContent = highlights;
     document.getElementById('page-checkboxes').textContent = checkboxes;
+    document.getElementById('page-notes').textContent = pageNotes;
   } catch (error) {
     console.error('Failed to update stats:', error);
   }
@@ -542,22 +555,10 @@ function init() {
       return;
     }
 
-    if (confirm(`Delete all ${pageAnnotations.length} annotations on this page?\n\nThis cannot be undone.`)) {
-      const pageUrl = getPageUrl(currentTab);
-
-      await browser.runtime.sendMessage({
-        type: MessageType.CLEAR_PAGE_ANNOTATIONS,
-        payload: { pageUrl }
-      });
-
-      // Tell content script to reload (clear DOM)
-      await sendCommand('COMMAND_RELOAD_ANNOTATIONS', {}, 1000);
-
-      // Update local state
-      pageAnnotations = [];
-      renderAnnotationList();
-      await updateStats();
-    }
+    // Show the styled confirmation dialog in the content script
+    await sendCommand('COMMAND_CLEAR_CONFIRM', {}, 1000);
+    // Close popup - the content script will handle the rest
+    window.close();
   });
 
   // Intent buttons
@@ -630,9 +631,75 @@ async function loadPopupData() {
   }
 }
 
+/**
+ * Handle realtime sync messages from background script
+ */
+function setupMessageListener() {
+  browser.runtime.onMessage.addListener((message) => {
+    if (!currentTab) return;
+
+    const currentPageUrl = getPageUrl(currentTab);
+
+    switch (message.type) {
+      case 'ANNOTATION_ADDED':
+        // Only update if annotation is for current page
+        if (message.pageUrl === currentPageUrl && message.annotation) {
+          pageAnnotations.push(message.annotation);
+          renderAnnotationList();
+          updateStats();
+        }
+        break;
+
+      case 'ANNOTATION_UPDATED':
+        if (message.pageUrl === currentPageUrl && message.annotationId) {
+          const annotation = pageAnnotations.find(a => a.id === message.annotationId);
+          if (annotation && message.patch) {
+            Object.assign(annotation, message.patch);
+            renderAnnotationList();
+          }
+        }
+        break;
+
+      case 'ANNOTATION_DELETED':
+        if (message.pageUrl === currentPageUrl && message.annotationId) {
+          pageAnnotations = pageAnnotations.filter(a => a.id !== message.annotationId);
+          renderAnnotationList();
+          updateStats();
+        }
+        break;
+
+      case 'PAGE_CLEARED':
+        if (message.pageUrl === currentPageUrl) {
+          pageAnnotations = [];
+          renderAnnotationList();
+          updateStats();
+        }
+        break;
+
+      case 'CHECKBOX_UPDATED':
+        if (message.annotationId) {
+          const annotation = pageAnnotations.find(a => a.id === message.annotationId);
+          if (annotation) {
+            annotation.checked = message.checked;
+            // Update checkbox in list if visible
+            const checkboxEl = document.querySelector(`.annotation-item[data-id="${message.annotationId}"] .popup-checkbox`);
+            if (checkboxEl) {
+              checkboxEl.checked = message.checked;
+            }
+          }
+        }
+        break;
+    }
+  });
+}
+
 // Start immediately - script is at end of body so DOM is ready
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('DOMContentLoaded', () => {
+    init();
+    setupMessageListener();
+  });
 } else {
   init();
+  setupMessageListener();
 }

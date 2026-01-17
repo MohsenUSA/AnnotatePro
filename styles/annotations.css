@@ -23,6 +23,10 @@
 .annotatepro-text-highlight {
   padding: 0.1em 0.2em;
   margin: 0 -0.2em;
+}
+
+/* Only force black text when there's an actual highlight background */
+.annotatepro-text-highlight.annotatepro-highlight {
   color: #000 !important;
   -webkit-text-fill-color: #000 !important;
 }
@@ -83,6 +87,9 @@
   display: inline-block !important;
   padding-left: 22px !important;
   margin-left: 2px;
+  /* Use gradient to exclude checkbox area from highlight */
+  background: linear-gradient(to right, transparent 20px, var(--annotatepro-color, transparent) 20px) !important;
+  border-radius: 2px;
 }
 
 .annotatepro-checkbox-text > .annotatepro-checkbox {
@@ -211,20 +218,126 @@
 /* ============ Note Indicator Badge ============ */
 .annotatepro-note-badge {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
+  top: -5px;
+  right: -5px;
+  width: 12px;
+  height: 12px;
   background: #8b5cf6;
   border-radius: 50%;
   cursor: pointer;
   z-index: 1000;
-  box-shadow: 0 0 6px 2px rgba(139, 92, 246, 0.7);
-  transition: transform 0.15s;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.6), 0 0 0 2px rgba(255, 255, 255, 0.9);
+  transition: transform 0.15s, box-shadow 0.15s;
 }
 
 .annotatepro-note-badge:hover {
-  transform: scale(1.1);
+  transform: scale(1.2);
+  box-shadow: 0 2px 12px rgba(139, 92, 246, 0.8), 0 0 0 2px rgba(255, 255, 255, 1);
+}
+
+/* ============ Page Note Bubble (Right Side, Vertically Centered) ============ */
+.annotatepro-page-note-bubble {
+  position: fixed;
+  top: 50%;
+  right: 24px;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 9999;
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.5), 0 0 0 3px rgba(255, 255, 255, 0.9);
+  transition: transform 0.2s, box-shadow 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-page-note-bubble::before {
+  content: '';
+  width: 20px;
+  height: 20px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='white' viewBox='0 0 24 24'%3E%3Cpath d='M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 7h10v2H7zm0 4h10v2H7zm0 4h7v2H7z'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+}
+
+.annotatepro-page-note-bubble:hover {
+  transform: translateY(-50%) scale(1.1);
+  box-shadow: 0 6px 24px rgba(139, 92, 246, 0.6), 0 0 0 3px rgba(255, 255, 255, 1);
+}
+
+.annotatepro-page-note-bubble:active {
+  transform: translateY(-50%) scale(1.05);
+}
+
+/* Badge count on page note bubble */
+.annotatepro-page-note-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  background: #ef4444;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Tooltip for page note bubble */
+.annotatepro-page-note-tooltip {
+  position: fixed;
+  top: 50%;
+  right: 80px;
+  transform: translateY(-50%) translateX(8px);
+  max-width: 280px;
+  padding: 12px 16px;
+  background: #1f1f1f;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.5;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 10000;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-page-note-tooltip.visible {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.annotatepro-page-note-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  width: 12px;
+  height: 12px;
+  background: #1f1f1f;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .annotatepro-page-note-bubble {
+    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4), 0 0 0 3px rgba(30, 30, 30, 0.9);
+  }
+
+  .annotatepro-page-note-bubble:hover {
+    box-shadow: 0 6px 24px rgba(139, 92, 246, 0.5), 0 0 0 3px rgba(30, 30, 30, 1);
+  }
 }
 
 /* Make parent position relative for badge positioning */
@@ -464,6 +577,321 @@
   color: #999;
 }
 
+/* ============ Note Modal (Large View) ============ */
+.annotatepro-note-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10005;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  backdrop-filter: blur(2px);
+}
+
+.annotatepro-note-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.25);
+  width: 90%;
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: annotatepro-modal-appear 0.2s ease-out;
+}
+
+@keyframes annotatepro-modal-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.annotatepro-note-modal-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  color: white;
+}
+
+.annotatepro-note-modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annotatepro-note-modal-header h2::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+  opacity: 0.9;
+}
+
+.annotatepro-note-modal-status {
+  font-size: 12px;
+  opacity: 0.9;
+  margin-right: 12px;
+}
+
+.annotatepro-note-modal-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.annotatepro-note-modal-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Highlight Modal - Yellow/Orange header */
+.annotatepro-highlight-modal-header {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+}
+
+.annotatepro-highlight-modal .annotatepro-note-modal-snippet {
+  background: #fffbeb;
+  border-color: #fef3c7;
+  color: #92400e;
+}
+
+/* Checkbox Modal - Green header */
+.annotatepro-checkbox-modal-header {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
+}
+
+.annotatepro-checkbox-modal .annotatepro-note-modal-snippet {
+  background: #f0fdf4;
+  border-color: #dcfce7;
+  color: #166534;
+}
+
+.annotatepro-note-modal-snippet {
+  padding: 12px 20px;
+  background: #f8f5ff;
+  border-bottom: 1px solid #e9e3f5;
+  font-size: 13px;
+  color: #5b4a7a;
+  line-height: 1.5;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.annotatepro-note-modal-snippet::before {
+  content: '"';
+  font-size: 20px;
+  color: #8b5cf6;
+  opacity: 0.5;
+  margin-right: 4px;
+}
+
+.annotatepro-note-modal-snippet::after {
+  content: '"';
+  font-size: 20px;
+  color: #8b5cf6;
+  opacity: 0.5;
+  margin-left: 4px;
+}
+
+.annotatepro-note-modal-colors {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  align-items: center;
+}
+
+.annotatepro-note-modal-colors-label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-right: 8px;
+}
+
+.annotatepro-note-modal-color {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+}
+
+.annotatepro-note-modal-color:hover {
+  transform: scale(1.15);
+}
+
+.annotatepro-note-modal-color.active {
+  border-color: #374151;
+}
+
+.annotatepro-note-modal-color-clear {
+  background: #f5f5f5 !important;
+  border: 2px dashed #d1d5db !important;
+  font-size: 14px;
+  font-weight: bold;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.annotatepro-note-modal-color-clear:hover {
+  background: #e5e7eb !important;
+  color: #6b7280;
+}
+
+.annotatepro-note-modal-color-clear.active {
+  border-color: #374151 !important;
+  border-style: solid !important;
+}
+
+.annotatepro-note-modal-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+
+.annotatepro-note-modal-toolbar-btn {
+  width: 32px;
+  height: 28px;
+  border: 1px solid #e5e7eb;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  transition: all 0.15s ease;
+}
+
+.annotatepro-note-modal-toolbar-btn:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #374151;
+}
+
+.annotatepro-note-modal-toolbar-btn:active {
+  background: #e5e7eb;
+}
+
+.annotatepro-note-modal-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+  max-height: 400px;
+}
+
+.annotatepro-note-modal-textarea {
+  flex: 1;
+  width: 100%;
+  padding: 16px 20px;
+  border: none;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.6;
+  resize: none;
+  box-sizing: border-box;
+}
+
+.annotatepro-note-modal-textarea:focus {
+  outline: none;
+}
+
+.annotatepro-note-modal-textarea::placeholder {
+  color: #9ca3af;
+}
+
+.annotatepro-note-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+}
+
+.annotatepro-note-modal-hint {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.annotatepro-note-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.annotatepro-note-modal-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.annotatepro-note-modal-btn-secondary {
+  background: white;
+  border: 1px solid #d1d5db;
+  color: #374151;
+}
+
+.annotatepro-note-modal-btn-secondary:hover {
+  background: #f3f4f6;
+}
+
+.annotatepro-note-modal-btn-primary {
+  background: #8b5cf6;
+  border: 1px solid #8b5cf6;
+  color: white;
+}
+
+.annotatepro-note-modal-btn-primary:hover {
+  background: #7c3aed;
+  border-color: #7c3aed;
+}
+
+.annotatepro-note-modal-btn-danger {
+  background: white;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+}
+
+.annotatepro-note-modal-btn-danger:hover {
+  background: #fef2f2;
+  border-color: #f87171;
+}
+
 /* ============ Clear Confirmation Dialog ============ */
 .annotatepro-confirm-overlay {
   position: fixed;
@@ -701,5 +1129,125 @@
 
   .annotatepro-note-cb {
     accent-color: #818cf8;
+  }
+
+  /* Dark mode for note modal */
+  .annotatepro-note-modal {
+    background: #1f1f1f;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  }
+
+  .annotatepro-note-modal-header {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+  }
+
+  /* Highlight modal dark mode */
+  .annotatepro-highlight-modal-header {
+    background: linear-gradient(135deg, #d97706 0%, #b45309 100%) !important;
+  }
+
+  .annotatepro-highlight-modal .annotatepro-note-modal-snippet {
+    background: #2d2517;
+    border-color: #3d3520;
+    color: #fcd34d;
+  }
+
+  /* Checkbox modal dark mode */
+  .annotatepro-checkbox-modal-header {
+    background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
+  }
+
+  .annotatepro-checkbox-modal .annotatepro-note-modal-snippet {
+    background: #172e1c;
+    border-color: #1f3d25;
+    color: #86efac;
+  }
+
+  .annotatepro-note-modal-snippet {
+    background: #2d2438;
+    border-color: #3d3348;
+    color: #c4b5fd;
+  }
+
+  .annotatepro-note-modal-colors {
+    border-color: #374151;
+  }
+
+  .annotatepro-note-modal-colors-label {
+    color: #9ca3af;
+  }
+
+  .annotatepro-note-modal-color.active {
+    border-color: #e5e7eb;
+  }
+
+  .annotatepro-note-modal-color-clear {
+    background: #374151 !important;
+    border-color: #4b5563 !important;
+    color: #9ca3af;
+  }
+
+  .annotatepro-note-modal-color-clear:hover {
+    background: #4b5563 !important;
+    color: #d1d5db;
+  }
+
+  .annotatepro-note-modal-color-clear.active {
+    border-color: #e5e7eb !important;
+  }
+
+  .annotatepro-note-modal-toolbar {
+    background: #2a2a2a;
+    border-color: #374151;
+  }
+
+  .annotatepro-note-modal-toolbar-btn {
+    background: #374151;
+    border-color: #4b5563;
+    color: #d1d5db;
+  }
+
+  .annotatepro-note-modal-toolbar-btn:hover {
+    background: #4b5563;
+    border-color: #6b7280;
+    color: #f3f4f6;
+  }
+
+  .annotatepro-note-modal-textarea {
+    background: #1f1f1f;
+    color: #e5e7eb;
+  }
+
+  .annotatepro-note-modal-textarea::placeholder {
+    color: #6b7280;
+  }
+
+  .annotatepro-note-modal-footer {
+    background: #2a2a2a;
+    border-color: #374151;
+  }
+
+  .annotatepro-note-modal-hint {
+    color: #6b7280;
+  }
+
+  .annotatepro-note-modal-btn-secondary {
+    background: #374151;
+    border-color: #4b5563;
+    color: #e5e7eb;
+  }
+
+  .annotatepro-note-modal-btn-secondary:hover {
+    background: #4b5563;
+  }
+
+  .annotatepro-note-modal-btn-danger {
+    background: #374151;
+    border-color: #7f1d1d;
+    color: #fca5a5;
+  }
+
+  .annotatepro-note-modal-btn-danger:hover {
+    background: #450a0a;
   }
 }
