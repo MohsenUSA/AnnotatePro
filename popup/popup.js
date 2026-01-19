@@ -607,8 +607,7 @@ async function loadPopupData() {
     const isAccessibleUrl = currentTab?.url &&
       !currentTab.url.startsWith('about:') &&
       !currentTab.url.startsWith('moz-extension:') &&
-      !currentTab.url.startsWith('chrome:') &&
-      !currentTab.url.startsWith('file:');
+      !currentTab.url.startsWith('chrome:');
 
     if (isAccessibleUrl) {
       // Run these in parallel for faster loading
