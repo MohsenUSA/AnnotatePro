@@ -17,9 +17,16 @@ const MessageType = {
   GET_PAGES_SUMMARY: 'GET_PAGES_SUMMARY',
   CLEAR_PAGE_ANNOTATIONS: 'CLEAR_PAGE_ANNOTATIONS',
   IMPORT_ANNOTATIONS: 'IMPORT_ANNOTATIONS',
+  SEARCH_ANNOTATIONS: 'SEARCH_ANNOTATIONS',
   ADD_GROUP: 'ADD_GROUP',
   GET_ALL_GROUPS: 'GET_ALL_GROUPS',
-  DELETE_GROUP: 'DELETE_GROUP'
+  DELETE_GROUP: 'DELETE_GROUP',
+  // Color operations
+  ADD_COLOR: 'ADD_COLOR',
+  GET_ALL_COLORS: 'GET_ALL_COLORS',
+  GET_COLOR: 'GET_COLOR',
+  UPDATE_COLOR: 'UPDATE_COLOR',
+  DELETE_COLOR: 'DELETE_COLOR'
 };
 
 /**
@@ -55,13 +62,27 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
   switch (type) {
     case MessageType.ADD_ANNOTATION:
-      return db.addAnnotation(payload).then(saved => {
+      return db.addAnnotation(payload).then(async saved => {
+        // Track color usage
+        if (saved.colorId) {
+          await db.incrementColorUsage(saved.colorId);
+        }
         broadcastMessage('ANNOTATION_ADDED', { annotation: saved, pageUrl: saved.pageUrl });
         return saved;
       });
 
     case MessageType.UPDATE_ANNOTATION:
-      return db.updateAnnotation(payload.id, payload.patch).then(async updated => {
+      return db.getAnnotation(payload.id).then(async oldAnnotation => {
+        const updated = await db.updateAnnotation(payload.id, payload.patch);
+
+        // Track color usage changes
+        if (payload.patch.colorId && oldAnnotation?.colorId !== payload.patch.colorId) {
+          if (oldAnnotation?.colorId) {
+            await db.decrementColorUsage(oldAnnotation.colorId);
+          }
+          await db.incrementColorUsage(payload.patch.colorId);
+        }
+
         broadcastMessage('ANNOTATION_UPDATED', {
           annotationId: payload.id,
           patch: payload.patch,
@@ -71,12 +92,17 @@ browser.runtime.onMessage.addListener((message, sender) => {
       });
 
     case MessageType.DELETE_ANNOTATION:
-      return db.getAnnotation(payload.id).then(annotation => {
-        return db.deleteAnnotation(payload.id).then(() => {
-          broadcastMessage('ANNOTATION_DELETED', {
-            annotationId: payload.id,
-            pageUrl: annotation?.pageUrl
-          });
+      return db.getAnnotation(payload.id).then(async annotation => {
+        await db.deleteAnnotation(payload.id);
+
+        // Track color usage
+        if (annotation?.colorId) {
+          await db.decrementColorUsage(annotation.colorId);
+        }
+
+        broadcastMessage('ANNOTATION_DELETED', {
+          annotationId: payload.id,
+          pageUrl: annotation?.pageUrl
         });
       });
 
@@ -93,7 +119,47 @@ browser.runtime.onMessage.addListener((message, sender) => {
       return db.getAnnotationCount();
 
     case MessageType.GET_PAGES_SUMMARY:
-      return db.getPagesSummary();
+      return db.getPagesSummary().then(async (pages) => {
+        // Add clipboard counts from storage
+        try {
+          const { clipboardHistory = [] } = await browser.storage.local.get('clipboardHistory');
+
+          // Count clipboard items per page
+          const clipboardCounts = {};
+          for (const entry of clipboardHistory) {
+            if (entry.pageUrl) {
+              clipboardCounts[entry.pageUrl] = (clipboardCounts[entry.pageUrl] || 0) + 1;
+            }
+          }
+
+          // Add clipboard count to each page
+          for (const page of pages) {
+            page.clipboardCount = clipboardCounts[page.pageUrl] || 0;
+          }
+
+          // Add pages that only have clipboard entries (no annotations)
+          for (const [pageUrl, count] of Object.entries(clipboardCounts)) {
+            if (!pages.find(p => p.pageUrl === pageUrl)) {
+              const entry = clipboardHistory.find(e => e.pageUrl === pageUrl);
+              pages.push({
+                pageUrl,
+                title: entry?.pageTitle || pageUrl,
+                highlightCount: 0,
+                checkboxCount: 0,
+                pageNoteCount: 0,
+                clipboardCount: count,
+                lastUpdated: entry?.timestamp || Date.now()
+              });
+            }
+          }
+
+          // Re-sort by last updated
+          pages.sort((a, b) => b.lastUpdated - a.lastUpdated);
+        } catch (e) {
+          console.error('Failed to load clipboard counts:', e);
+        }
+        return pages;
+      });
 
     case MessageType.CLEAR_PAGE_ANNOTATIONS:
       return db.clearPageAnnotations(payload.pageUrl).then(() => {
@@ -104,6 +170,68 @@ browser.runtime.onMessage.addListener((message, sender) => {
       return db.importAnnotations(payload.annotations).then(result => {
         broadcastMessage('ANNOTATIONS_IMPORTED', { result });
         return result;
+      });
+
+    case MessageType.SEARCH_ANNOTATIONS:
+      return db.searchAnnotations(payload.query, payload.options).then(async (annotations) => {
+        // Also search clipboard items if not filtering by type (or if clipboard type included)
+        const typeFilter = payload.options?.types || [];
+        const includeClipboard = typeFilter.length === 0 || typeFilter.includes('clipboard');
+
+        if (includeClipboard) {
+          try {
+            const { clipboardHistory = [] } = await browser.storage.local.get('clipboardHistory');
+            const query = (payload.query || '').toLowerCase();
+
+            let matchingClipboard = clipboardHistory;
+
+            // Filter by search query
+            if (query) {
+              matchingClipboard = matchingClipboard.filter(item =>
+                (item.text || '').toLowerCase().includes(query) ||
+                (item.pageTitle || '').toLowerCase().includes(query) ||
+                (item.pageUrl || '').toLowerCase().includes(query)
+              );
+            }
+
+            // Apply date range filter if present
+            if (payload.options?.dateRange) {
+              const now = Date.now();
+              const ranges = {
+                'today': 24 * 60 * 60 * 1000,
+                'week': 7 * 24 * 60 * 60 * 1000,
+                'month': 30 * 24 * 60 * 60 * 1000
+              };
+              const maxAge = ranges[payload.options.dateRange];
+              if (maxAge) {
+                matchingClipboard = matchingClipboard.filter(item =>
+                  (now - (item.timestamp || 0)) <= maxAge
+                );
+              }
+            }
+
+            // Convert clipboard items to annotation-like format
+            const clipboardAsAnnotations = matchingClipboard.map(item => ({
+              id: `clipboard-${item.timestamp}`,
+              annotationType: 'clipboard',
+              textSnapshot: item.text,
+              pageUrl: item.pageUrl,
+              pageTitle: item.pageTitle,
+              createdAt: item.timestamp,
+              updatedAt: item.timestamp,
+              isClipboard: true
+            }));
+
+            // Combine and sort by updatedAt
+            const combined = [...annotations, ...clipboardAsAnnotations];
+            combined.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+            return combined;
+          } catch (e) {
+            console.error('Failed to search clipboard:', e);
+          }
+        }
+
+        return annotations;
       });
 
     case 'CLEAR_ALL_ANNOTATIONS':
@@ -120,9 +248,51 @@ browser.runtime.onMessage.addListener((message, sender) => {
     case MessageType.DELETE_GROUP:
       return db.deleteGroup(payload.id);
 
+    // Color operations
+    case MessageType.ADD_COLOR:
+      return db.addColor(payload).then(color => {
+        broadcastMessage('COLOR_ADDED', { color });
+        // Rebuild context menus with new color
+        createContextMenus();
+        return color;
+      });
+
+    case MessageType.GET_ALL_COLORS:
+      return db.getAllColors();
+
+    case MessageType.GET_COLOR:
+      return db.getColor(payload.id);
+
+    case MessageType.UPDATE_COLOR:
+      return db.updateColor(payload.id, payload.patch).then(color => {
+        broadcastMessage('COLOR_UPDATED', { color });
+        // Rebuild context menus if color name changed
+        if (payload.patch.name) {
+          createContextMenus();
+        }
+        return color;
+      });
+
+    case MessageType.DELETE_COLOR:
+      return db.deleteColor(payload.id, payload.reassignToColorId).then(result => {
+        broadcastMessage('COLOR_DELETED', { colorId: payload.id });
+        // Rebuild context menus without deleted color
+        createContextMenus();
+        return result;
+      });
+
     case 'OPEN_DASHBOARD':
       browser.tabs.create({ url: browser.runtime.getURL('dashboard/dashboard.html') });
       return Promise.resolve();
+
+    case 'CAPTURE_SCREENSHOT':
+      // Capture the visible tab as a screenshot
+      return browser.tabs.captureVisibleTab(null, { format: 'png' })
+        .then(dataUrl => ({ dataUrl }))
+        .catch(error => {
+          console.error('AnnotatePro: Screenshot capture failed', error);
+          return { error: error.message };
+        });
 
     case 'BROADCAST_CHECKBOX_UPDATE':
       // This is now handled by ANNOTATION_UPDATED broadcast, but keep for backwards compatibility
@@ -153,13 +323,22 @@ browser.commands.onCommand.addListener(async (command) => {
     case 'toggle-checkbox':
       browser.tabs.sendMessage(tabId, { type: 'COMMAND_CHECKBOX' });
       break;
+    case 'toggle-sidebar':
+      browser.tabs.sendMessage(tabId, { type: 'COMMAND_TOGGLE_SIDEBAR' });
+      break;
+    case 'capture-screenshot':
+      browser.tabs.sendMessage(tabId, { type: 'COMMAND_CAPTURE_AREA' });
+      break;
   }
 });
 
 /**
  * Create context menus
  */
-function createContextMenus() {
+async function createContextMenus() {
+  // Remove all existing menus first
+  await browser.contextMenus.removeAll();
+
   // Parent menu
   browser.contextMenus.create({
     id: 'annotatepro-parent',
@@ -175,29 +354,44 @@ function createContextMenus() {
     contexts: ['selection']
   });
 
-  // Highlight with intent submenu
+  // Highlight with color submenu
   browser.contextMenus.create({
-    id: 'annotatepro-highlight-intent',
+    id: 'annotatepro-highlight-color',
     parentId: 'annotatepro-parent',
     title: 'Highlight as...',
     contexts: ['selection']
   });
 
-  const intents = [
-    { id: 'ACTION', title: 'Action (Yellow)' },
-    { id: 'QUESTION', title: 'Question (Blue)' },
-    { id: 'RISK', title: 'Risk (Red)' },
-    { id: 'REFERENCE', title: 'Reference (Green)' },
-    { id: 'CUSTOM', title: 'Custom (Purple)' }
-  ];
+  // Get colors from database and create menu items
+  try {
+    const colors = await db.getAllColors();
+    colors.sort((a, b) => a.sortOrder - b.sortOrder);
 
-  for (const intent of intents) {
-    browser.contextMenus.create({
-      id: `annotatepro-intent-${intent.id}`,
-      parentId: 'annotatepro-highlight-intent',
-      title: intent.title,
-      contexts: ['selection']
-    });
+    for (const color of colors) {
+      browser.contextMenus.create({
+        id: `annotatepro-color-${color.id}`,
+        parentId: 'annotatepro-highlight-color',
+        title: color.name,
+        contexts: ['selection']
+      });
+    }
+  } catch (error) {
+    console.error('AnnotatePro: Failed to load colors for context menu', error);
+    // Fallback to default colors if database not ready
+    const defaultColors = [
+      { id: 'default-action', name: 'Action' },
+      { id: 'default-question', name: 'Question' },
+      { id: 'default-risk', name: 'Risk' },
+      { id: 'default-reference', name: 'Reference' }
+    ];
+    for (const color of defaultColors) {
+      browser.contextMenus.create({
+        id: `annotatepro-color-${color.id}`,
+        parentId: 'annotatepro-highlight-color',
+        title: color.name,
+        contexts: ['selection']
+      });
+    }
   }
 
   // Add/Edit Note
@@ -255,6 +449,65 @@ function createContextMenus() {
     title: 'Clear All on Page',
     contexts: ['all']
   });
+
+  // Separator
+  browser.contextMenus.create({
+    id: 'annotatepro-separator-3',
+    parentId: 'annotatepro-parent',
+    type: 'separator',
+    contexts: ['all']
+  });
+
+  // Sidebar submenu
+  browser.contextMenus.create({
+    id: 'annotatepro-sidebar-parent',
+    parentId: 'annotatepro-parent',
+    title: 'Sidebar',
+    contexts: ['all']
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-sidebar-toggle',
+    parentId: 'annotatepro-sidebar-parent',
+    title: 'Show/Hide Sidebar',
+    contexts: ['all']
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-sidebar-position',
+    parentId: 'annotatepro-sidebar-parent',
+    title: 'Switch Side (Left/Right)',
+    contexts: ['all']
+  });
+
+  // Capture screenshot submenu
+  browser.contextMenus.create({
+    id: 'annotatepro-screenshot-parent',
+    parentId: 'annotatepro-parent',
+    title: 'Capture Screenshot',
+    contexts: ['all']
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-capture-area',
+    parentId: 'annotatepro-screenshot-parent',
+    title: 'Selected Area',
+    contexts: ['all']
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-capture-visible',
+    parentId: 'annotatepro-screenshot-parent',
+    title: 'Visible Area',
+    contexts: ['all']
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-capture-fullpage',
+    parentId: 'annotatepro-screenshot-parent',
+    title: 'Whole Page',
+    contexts: ['all']
+  });
 }
 
 /**
@@ -264,8 +517,13 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   const menuId = info.menuItemId;
 
   if (menuId === 'annotatepro-highlight') {
-    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_HIGHLIGHT', intent: 'DEFAULT' });
+    // Use default color (first color in sort order)
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_HIGHLIGHT', colorId: 'default-action' });
+  } else if (menuId.startsWith('annotatepro-color-')) {
+    const colorId = menuId.replace('annotatepro-color-', '');
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_HIGHLIGHT', colorId });
   } else if (menuId.startsWith('annotatepro-intent-')) {
+    // Legacy support for old intent-based menu items
     const intent = menuId.replace('annotatepro-intent-', '');
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_HIGHLIGHT', intent });
   } else if (menuId === 'annotatepro-checkbox') {
@@ -279,6 +537,16 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (menuId === 'annotatepro-clear-page') {
     // Show confirmation dialog in content script
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CLEAR_CONFIRM' });
+  } else if (menuId === 'annotatepro-sidebar-toggle') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_TOGGLE_SIDEBAR' });
+  } else if (menuId === 'annotatepro-sidebar-position') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_SWITCH_SIDEBAR_POSITION' });
+  } else if (menuId === 'annotatepro-capture-area') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_AREA' });
+  } else if (menuId === 'annotatepro-capture-visible') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_VISIBLE' });
+  } else if (menuId === 'annotatepro-capture-fullpage') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_FULL_PAGE' });
   }
 });
 

@@ -1,0 +1,177 @@
+/**
+ * AnnotatePro PDF Overlay Styles
+ */
+
+/* PDF Overlay Container */
+.annotatepro-pdf-overlay-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* Page Overlay */
+.annotatepro-pdf-page-overlay {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* PDF Annotation */
+.annotatepro-pdf-annotation {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+
+.annotatepro-pdf-annotation:hover {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5);
+}
+
+/* PDF Highlight */
+.annotatepro-pdf-annotation.highlight {
+  mix-blend-mode: multiply;
+}
+
+/* PDF Checkbox */
+.annotatepro-pdf-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #4caf50;
+}
+
+/* Note Indicator */
+.annotatepro-pdf-note-indicator {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* PDF Popup */
+.annotatepro-pdf-popup {
+  position: fixed;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 10000;
+  min-width: 200px;
+  max-width: 300px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+}
+
+.annotatepro-pdf-popup-title {
+  margin-bottom: 8px;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.annotatepro-pdf-note-input {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.annotatepro-pdf-note-input:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.annotatepro-pdf-popup-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.annotatepro-pdf-popup-btn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.annotatepro-pdf-popup-btn.save {
+  flex: 1;
+  background: #6366f1;
+  color: white;
+}
+
+.annotatepro-pdf-popup-btn.save:hover {
+  background: #4f46e5;
+}
+
+.annotatepro-pdf-popup-btn.delete {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.annotatepro-pdf-popup-btn.delete:hover {
+  background: #fecaca;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .annotatepro-pdf-popup {
+    background: #1a1a1a;
+    border-color: #333;
+    color: #e0e0e0;
+  }
+
+  .annotatepro-pdf-note-input {
+    background: #2a2a2a;
+    border-color: #444;
+    color: #e0e0e0;
+  }
+
+  .annotatepro-pdf-note-input:focus {
+    border-color: #6366f1;
+  }
+
+  .annotatepro-pdf-popup-btn.save {
+    background: #6366f1;
+  }
+
+  .annotatepro-pdf-popup-btn.save:hover {
+    background: #4f46e5;
+  }
+
+  .annotatepro-pdf-popup-btn.delete {
+    background: #3a2020;
+    color: #f87171;
+  }
+
+  .annotatepro-pdf-popup-btn.delete:hover {
+    background: #4a2020;
+  }
+}
+
+/* PDF Selection Mode Indicator */
+.annotatepro-pdf-selection-mode {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  z-index: 10001;
+  pointer-events: none;
+}

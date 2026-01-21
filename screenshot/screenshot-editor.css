@@ -1,0 +1,409 @@
+/**
+ * AnnotatePro Screenshot Editor Styles
+ */
+
+/* Area Selection Overlay */
+.annotatepro-selection-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 2147483647;
+  cursor: crosshair;
+}
+
+.annotatepro-selection-box {
+  position: absolute;
+  border: 2px dashed #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+  pointer-events: none;
+}
+
+.annotatepro-selection-instructions {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  z-index: 2147483647;
+}
+
+.annotatepro-selection-dimensions {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Screenshot Editor Overlay */
+.annotatepro-screenshot-editor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.9);
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Editor Header */
+.annotatepro-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.annotatepro-editor-title {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.annotatepro-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.annotatepro-editor-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.annotatepro-editor-btn-primary {
+  background: #6366f1;
+  color: white;
+}
+
+.annotatepro-editor-btn-primary:hover {
+  background: #4f46e5;
+}
+
+.annotatepro-editor-btn-secondary {
+  background: #333;
+  color: #e0e0e0;
+}
+
+.annotatepro-editor-btn-secondary:hover {
+  background: #444;
+}
+
+.annotatepro-editor-btn-close {
+  background: transparent;
+  color: #999;
+  padding: 8px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.annotatepro-editor-btn-close:hover {
+  color: #fff;
+}
+
+/* Editor Toolbar */
+.annotatepro-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: #222;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.annotatepro-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.annotatepro-toolbar-label {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  margin-right: 8px;
+}
+
+.annotatepro-toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: #444;
+  margin: 0 8px;
+}
+
+.annotatepro-tool-btn {
+  width: 36px;
+  height: 36px;
+  border: 2px solid transparent;
+  background: #333;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ccc;
+  font-size: 16px;
+  transition: all 0.15s;
+}
+
+.annotatepro-tool-btn:hover {
+  background: #444;
+  color: #fff;
+}
+
+.annotatepro-tool-btn.active {
+  border-color: #6366f1;
+  background: #3730a3;
+  color: #fff;
+}
+
+.annotatepro-tool-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Color Picker */
+.annotatepro-color-btn {
+  width: 28px;
+  height: 28px;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.annotatepro-color-btn:hover {
+  transform: scale(1.1);
+}
+
+.annotatepro-color-btn.active {
+  border-color: #fff;
+}
+
+/* Stroke Size */
+.annotatepro-size-btn {
+  width: 32px;
+  height: 32px;
+  border: 2px solid transparent;
+  background: #333;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.annotatepro-size-btn:hover {
+  background: #444;
+}
+
+.annotatepro-size-btn.active {
+  border-color: #6366f1;
+}
+
+.annotatepro-size-dot {
+  background: #fff;
+  border-radius: 50%;
+}
+
+.annotatepro-size-btn[data-size="small"] .annotatepro-size-dot {
+  width: 4px;
+  height: 4px;
+}
+
+.annotatepro-size-btn[data-size="medium"] .annotatepro-size-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.annotatepro-size-btn[data-size="large"] .annotatepro-size-dot {
+  width: 12px;
+  height: 12px;
+}
+
+/* Canvas Container */
+.annotatepro-editor-canvas-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: auto;
+  background: #111;
+}
+
+.annotatepro-editor-canvas-wrapper {
+  position: relative;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+.annotatepro-editor-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 160px);
+  cursor: crosshair;
+}
+
+/* Text Input Overlay */
+.annotatepro-text-input-overlay {
+  position: absolute;
+  background: transparent;
+  border: 2px dashed #6366f1;
+  outline: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 16px;
+  padding: 4px 8px;
+  min-width: 100px;
+  color: inherit;
+  resize: none;
+}
+
+/* Toast Notification */
+.annotatepro-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 2147483647;
+  animation: annotatepro-toast-in 0.3s ease;
+}
+
+.annotatepro-toast.success {
+  background: #059669;
+}
+
+.annotatepro-toast.error {
+  background: #dc2626;
+}
+
+@keyframes annotatepro-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Keyboard shortcut hints */
+.annotatepro-editor-shortcuts {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 12px 16px;
+  border-radius: 8px;
+  color: #888;
+  font-size: 11px;
+}
+
+.annotatepro-editor-shortcuts kbd {
+  background: #444;
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-right: 4px;
+  color: #ccc;
+}
+
+/* Whole Page Capture Progress Overlay */
+.annotatepro-capture-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-capture-progress-content {
+  background: #1a1a1a;
+  padding: 32px 48px;
+  border-radius: 12px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  min-width: 280px;
+}
+
+.annotatepro-capture-progress-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #333;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  margin: 0 auto 16px;
+  animation: annotatepro-spin 1s linear infinite;
+}
+
+@keyframes annotatepro-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.annotatepro-capture-progress-text {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 16px;
+}
+
+.annotatepro-capture-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.annotatepro-capture-progress-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+.annotatepro-capture-progress-count {
+  color: #888;
+  font-size: 13px;
+}

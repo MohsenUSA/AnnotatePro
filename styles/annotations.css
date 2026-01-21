@@ -220,8 +220,8 @@
   position: absolute;
   top: -5px;
   right: -5px;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   background: #8b5cf6;
   border-radius: 50%;
   cursor: pointer;
@@ -692,6 +692,22 @@
   color: #166534;
 }
 
+.annotatepro-note-modal-snippet-wrapper {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 20px;
+  background: #f8f5ff;
+  border-bottom: 1px solid #e9e3f5;
+}
+
+.annotatepro-note-modal-snippet-wrapper .annotatepro-note-modal-snippet {
+  flex: 1;
+  padding: 0;
+  background: transparent;
+  border-bottom: none;
+}
+
 .annotatepro-note-modal-snippet {
   padding: 12px 20px;
   background: #f8f5ff;
@@ -717,6 +733,43 @@
   color: #8b5cf6;
   opacity: 0.5;
   margin-left: 4px;
+}
+
+.annotatepro-note-modal-copy-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.annotatepro-note-modal-copy-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #374151;
+}
+
+.annotatepro-note-modal-copy-btn.copied {
+  background: #dcfce7;
+  color: #16a34a;
+  border-color: #86efac;
+}
+
+.annotatepro-note-modal-toolbar-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.annotatepro-note-modal-toolbar-wrapper .annotatepro-note-modal-toolbar {
+  padding: 0;
+  border-bottom: none;
 }
 
 .annotatepro-note-modal-colors {
@@ -1167,6 +1220,42 @@
     background: #2d2438;
     border-color: #3d3348;
     color: #c4b5fd;
+  }
+
+  .annotatepro-note-modal-snippet-wrapper {
+    background: #2d2438;
+    border-color: #3d3348;
+  }
+
+  .annotatepro-highlight-modal .annotatepro-note-modal-snippet-wrapper {
+    background: #2d2517;
+    border-color: #3d3520;
+  }
+
+  .annotatepro-checkbox-modal .annotatepro-note-modal-snippet-wrapper {
+    background: #172e1c;
+    border-color: #1f3d25;
+  }
+
+  .annotatepro-note-modal-copy-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #9ca3af;
+  }
+
+  .annotatepro-note-modal-copy-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #d1d5db;
+  }
+
+  .annotatepro-note-modal-copy-btn.copied {
+    background: #14532d;
+    color: #86efac;
+    border-color: #166534;
+  }
+
+  .annotatepro-note-modal-toolbar-wrapper {
+    border-color: #374151;
   }
 
   .annotatepro-note-modal-colors {

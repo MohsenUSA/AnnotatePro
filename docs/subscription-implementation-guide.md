@@ -8,7 +8,16 @@ This guide covers implementing a subscription system for the AnnotatePro browser
 - 3-day free trial with full features
 - After trial: paywall blocks all annotation creation
 - Existing annotations remain viewable (read-only)
-- Pro plan: $5/month or $48/year
+
+**Pricing (per browser):**
+- Monthly: $3/month
+- Annual: $30/year (2 months free)
+- Lifetime: $100 one-time
+
+**Bundle Pricing (all browsers):**
+- Monthly: $5/month
+- Annual: $50/year
+- Lifetime: $150 one-time
 
 **Authentication:**
 - Email/password
@@ -85,21 +94,25 @@ CREATE TABLE public.profiles (
   id UUID REFERENCES auth.users(id) PRIMARY KEY,
   email TEXT,
   trial_start TIMESTAMPTZ DEFAULT NOW(),
-  plan_tier TEXT DEFAULT 'trial', -- 'trial', 'expired', 'pro'
+  plan_tier TEXT DEFAULT 'trial', -- 'trial', 'expired', 'pro', 'lifetime', 'gifted'
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Subscriptions table
+-- Subscriptions table (platform-specific)
 CREATE TABLE public.subscriptions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) NOT NULL,
+  platform TEXT NOT NULL, -- 'firefox', 'chrome', 'edge', 'all' (bundle)
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
   status TEXT DEFAULT 'inactive', -- 'active', 'canceled', 'past_due', 'inactive'
+  plan_type TEXT, -- 'monthly', 'annual', 'lifetime'
   current_period_end TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE(user_id, platform) -- one subscription per platform per user
 );
 
 -- Enable RLS
@@ -136,11 +149,18 @@ CREATE TRIGGER on_auth_user_created
 ### 1.4 Set Up Stripe
 
 1. Create account at https://stripe.com
-2. Go to Products > Add product
-   - Name: AnnotatePro Pro
-   - Pricing:
-     - $5.00 / month (recurring)
-     - $48.00 / year (recurring)
+2. Go to Products > Add products:
+
+   **Single Browser:**
+   - **AnnotatePro Monthly** - $3.00/month (recurring)
+   - **AnnotatePro Annual** - $30.00/year (recurring)
+   - **AnnotatePro Lifetime** - $100.00 (one-time)
+
+   **All Browsers Bundle:**
+   - **AnnotatePro Bundle Monthly** - $5.00/month (recurring)
+   - **AnnotatePro Bundle Annual** - $50.00/year (recurring)
+   - **AnnotatePro Bundle Lifetime** - $150.00 (one-time)
+
 3. Note the Price IDs (e.g., `price_xxx`)
 4. Go to Developers > API keys, note your keys:
    - Publishable key (for frontend)
@@ -185,74 +205,64 @@ serve(async (req) => {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session
       const userId = session.metadata?.user_id
+      const platform = session.metadata?.platform // 'firefox', 'chrome', 'edge', or 'all'
+      const planType = session.metadata?.plan_type
       const customerId = session.customer as string
-      const subscriptionId = session.subscription as string
 
-      // Get subscription details
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId)
+      if (planType === 'lifetime') {
+        // One-time lifetime purchase
+        await supabase.from('subscriptions').upsert({
+          user_id: userId,
+          platform: platform,
+          stripe_customer_id: customerId,
+          status: 'active',
+          plan_type: 'lifetime',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,platform' })
+      } else {
+        // Recurring subscription (monthly/annual)
+        const subscriptionId = session.subscription as string
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId)
 
-      // Update database
-      await supabase.from('subscriptions').upsert({
-        user_id: userId,
-        stripe_customer_id: customerId,
-        stripe_subscription_id: subscriptionId,
-        status: 'active',
-        current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' })
-
-      // Update profile
-      await supabase.from('profiles')
-        .update({ plan_tier: 'pro', updated_at: new Date().toISOString() })
-        .eq('id', userId)
+        await supabase.from('subscriptions').upsert({
+          user_id: userId,
+          platform: platform,
+          stripe_customer_id: customerId,
+          stripe_subscription_id: subscriptionId,
+          status: 'active',
+          plan_type: subscription.items.data[0].plan.interval === 'year' ? 'annual' : 'monthly',
+          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,platform' })
+      }
 
       break
     }
 
     case 'customer.subscription.updated': {
       const subscription = event.data.object as Stripe.Subscription
-      const customerId = subscription.customer as string
+      const subscriptionId = subscription.id
 
-      // Find user by customer ID
-      const { data: sub } = await supabase
-        .from('subscriptions')
-        .select('user_id')
-        .eq('stripe_customer_id', customerId)
-        .single()
-
-      if (sub) {
-        await supabase.from('subscriptions')
-          .update({
-            status: subscription.status === 'active' ? 'active' : subscription.status,
-            current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('user_id', sub.user_id)
-      }
+      // Update by subscription ID (user may have multiple subscriptions)
+      await supabase.from('subscriptions')
+        .update({
+          status: subscription.status === 'active' ? 'active' : subscription.status,
+          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('stripe_subscription_id', subscriptionId)
 
       break
     }
 
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription
-      const customerId = subscription.customer as string
+      const subscriptionId = subscription.id
 
-      // Find user and downgrade
-      const { data: sub } = await supabase
-        .from('subscriptions')
-        .select('user_id')
-        .eq('stripe_customer_id', customerId)
-        .single()
-
-      if (sub) {
-        await supabase.from('subscriptions')
-          .update({ status: 'canceled', updated_at: new Date().toISOString() })
-          .eq('user_id', sub.user_id)
-
-        await supabase.from('profiles')
-          .update({ plan_tier: 'expired', updated_at: new Date().toISOString() })
-          .eq('id', sub.user_id)
-      }
+      // Cancel this specific subscription (user may have others)
+      await supabase.from('subscriptions')
+        .update({ status: 'canceled', updated_at: new Date().toISOString() })
+        .eq('stripe_subscription_id', subscriptionId)
 
       break
     }
@@ -302,15 +312,19 @@ serve(async (req) => {
       })
     }
 
-    const { priceId } = await req.json()
+    const { priceId, platform, isLifetime } = await req.json()
 
     const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
+      mode: isLifetime ? 'payment' : 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: 'https://YOUR_DOMAIN/success?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: 'https://YOUR_DOMAIN/canceled',
-      metadata: { user_id: user.id },
+      metadata: {
+        user_id: user.id,
+        platform: platform, // 'firefox', 'chrome', 'edge', or 'all' for bundle
+        plan_type: isLifetime ? 'lifetime' : 'subscription'
+      },
       customer_email: user.email,
     })
 
@@ -453,6 +467,22 @@ import { supabase } from '../lib/supabase.js'
 
 const TRIAL_DAYS = 3
 
+/**
+ * Detect current browser platform
+ */
+export function detectPlatform() {
+  const ua = navigator.userAgent
+  if (typeof browser !== 'undefined' && browser.runtime?.getBrowserInfo) {
+    return 'firefox'
+  }
+  if (ua.includes('Edg/')) return 'edge'
+  if (ua.includes('Chrome')) return 'chrome'
+  return 'unknown'
+}
+
+/**
+ * Get subscription status for current platform
+ */
 export async function getSubscriptionStatus() {
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -461,33 +491,48 @@ export async function getSubscriptionStatus() {
     return checkLocalTrial()
   }
 
-  // Get profile with trial info
+  const platform = detectPlatform()
+
+  // Check for active subscription (platform-specific OR bundle)
+  const { data: subscriptions } = await supabase
+    .from('subscriptions')
+    .select('platform, status, plan_type')
+    .eq('user_id', user.id)
+    .eq('status', 'active')
+
+  // Check if user has bundle (all browsers) or platform-specific subscription
+  const hasBundle = subscriptions?.some(s => s.platform === 'all')
+  const hasPlatform = subscriptions?.some(s => s.platform === platform)
+
+  if (hasBundle || hasPlatform) {
+    const sub = subscriptions.find(s => s.platform === 'all' || s.platform === platform)
+    return { status: sub.plan_type, canCreate: true, platform: sub.platform }
+  }
+
+  // Check for gifted access in profile
   const { data: profile } = await supabase
     .from('profiles')
     .select('plan_tier, trial_start')
     .eq('id', user.id)
     .single()
 
-  if (!profile) {
-    return { status: 'unknown', canCreate: false }
-  }
-
-  // Check if pro subscriber
-  if (profile.plan_tier === 'pro') {
-    return { status: 'pro', canCreate: true }
+  if (profile?.plan_tier === 'gifted') {
+    return { status: 'gifted', canCreate: true }
   }
 
   // Check trial
-  const trialStart = new Date(profile.trial_start)
-  const trialEnd = new Date(trialStart.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000)
-  const now = new Date()
+  if (profile?.trial_start) {
+    const trialStart = new Date(profile.trial_start)
+    const trialEnd = new Date(trialStart.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000)
+    const now = new Date()
 
-  if (now < trialEnd) {
-    const daysLeft = Math.ceil((trialEnd - now) / (24 * 60 * 60 * 1000))
-    return { status: 'trial', canCreate: true, daysLeft }
+    if (now < trialEnd) {
+      const daysLeft = Math.ceil((trialEnd - now) / (24 * 60 * 60 * 1000))
+      return { status: 'trial', canCreate: true, daysLeft }
+    }
   }
 
-  return { status: 'expired', canCreate: false }
+  return { status: 'expired', canCreate: false, platform }
 }
 
 async function checkLocalTrial() {
@@ -512,15 +557,23 @@ async function checkLocalTrial() {
   return { status: 'expired', canCreate: false }
 }
 
-export async function createCheckoutSession(priceId) {
+/**
+ * Create checkout session
+ * @param {string} priceId - Stripe price ID
+ * @param {boolean} isBundle - Whether this is an all-browsers bundle
+ * @param {boolean} isLifetime - Whether this is a lifetime purchase
+ */
+export async function createCheckoutSession(priceId, isBundle = false, isLifetime = false) {
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!session) {
     throw new Error('Must be logged in to subscribe')
   }
 
+  const platform = isBundle ? 'all' : detectPlatform()
+
   const response = await supabase.functions.invoke('create-checkout', {
-    body: { priceId }
+    body: { priceId, platform, isLifetime }
   })
 
   if (response.error) {
@@ -529,6 +582,42 @@ export async function createCheckoutSession(priceId) {
 
   return response.data.url
 }
+```
+
+### 3.5 Add Message Handlers to background.js
+
+Add these cases to the message switch in `background/background.js`:
+
+```javascript
+// Auth messages
+case 'SIGN_UP':
+  return auth.signUp(payload.email, payload.password)
+
+case 'SIGN_IN':
+  return auth.signIn(payload.email, payload.password)
+
+case 'SIGN_IN_GOOGLE':
+  return auth.signInWithGoogle()
+
+case 'SIGN_OUT':
+  return auth.signOut()
+
+case 'GET_USER':
+  return auth.getUser()
+
+case 'GET_SESSION':
+  return auth.getSession()
+
+// Subscription messages
+case 'GET_SUBSCRIPTION_STATUS':
+  return subscription.getSubscriptionStatus()
+
+case 'CREATE_CHECKOUT':
+  return subscription.createCheckoutSession(
+    payload.priceId,
+    payload.isBundle,
+    payload.isLifetime
+  )
 ```
 
 ---
@@ -582,9 +671,17 @@ function showPaywallModal() {
       <h2>Trial Expired</h2>
       <p>Your 3-day free trial has ended. Subscribe to continue creating annotations.</p>
       <p>Your existing annotations are still viewable.</p>
+      <h3>This Browser Only</h3>
       <div class="annotatepro-paywall-options">
-        <button class="annotatepro-paywall-btn monthly">$5/month</button>
-        <button class="annotatepro-paywall-btn yearly">$48/year (Save 20%)</button>
+        <button class="annotatepro-paywall-btn" data-price="monthly">$3/month</button>
+        <button class="annotatepro-paywall-btn" data-price="annual">$30/year</button>
+        <button class="annotatepro-paywall-btn" data-price="lifetime">$100 lifetime</button>
+      </div>
+      <h3>All Browsers (Firefox, Chrome, Edge)</h3>
+      <div class="annotatepro-paywall-options bundle">
+        <button class="annotatepro-paywall-btn" data-price="bundle-monthly">$5/month</button>
+        <button class="annotatepro-paywall-btn" data-price="bundle-annual">$50/year</button>
+        <button class="annotatepro-paywall-btn recommended" data-price="bundle-lifetime">$150 lifetime</button>
       </div>
       <button class="annotatepro-paywall-close">Maybe Later</button>
     </div>
@@ -639,18 +736,58 @@ Add to `popup/popup.html`:
 - [ ] Logout clears session
 - [ ] Session persists across browser restart
 
-### Payment Flow
+### Payment Flow (Single Browser)
 - [ ] Checkout redirects to Stripe
-- [ ] Successful payment activates Pro
-- [ ] Webhook updates database
+- [ ] Successful payment creates subscription with correct platform
+- [ ] Webhook updates database with platform
 - [ ] User sees "Pro" badge after payment
-- [ ] Subscription cancellation reverts to expired
+- [ ] Subscription only works on purchased browser
+- [ ] Subscription cancellation removes access
+
+### Payment Flow (Bundle)
+- [ ] Bundle checkout sets platform = 'all'
+- [ ] Bundle subscription works on Firefox
+- [ ] Bundle subscription works on Chrome
+- [ ] Bundle subscription works on Edge
+
+### Lifetime Purchases
+- [ ] Lifetime uses mode: 'payment' (not subscription)
+- [ ] Lifetime sets plan_type: 'lifetime'
+- [ ] No recurring billing for lifetime
+- [ ] Lifetime access persists indefinitely
 
 ### Edge Cases
 - [ ] Offline mode uses cached subscription status
 - [ ] Network errors show appropriate message
 - [ ] Invalid login shows error
 - [ ] Expired session refreshes automatically
+- [ ] User with expired single-browser sub sees paywall on other browsers
+- [ ] User can have both single-browser and bundle (edge case)
+
+---
+
+## Granting Free Subscriptions
+
+To give a user free access (beta testers, friends, partners), set their `plan_tier` to `'gifted'` in Supabase:
+
+```sql
+-- Grant gifted access by email
+UPDATE profiles
+SET plan_tier = 'gifted', updated_at = NOW()
+WHERE email = 'friend@example.com';
+
+-- Or by user ID
+UPDATE profiles
+SET plan_tier = 'gifted', updated_at = NOW()
+WHERE id = 'uuid-here';
+
+-- Revoke gifted access (reverts to expired)
+UPDATE profiles
+SET plan_tier = 'expired', updated_at = NOW()
+WHERE email = 'friend@example.com';
+```
+
+The user will see a "Gifted" badge in the popup and have full access without payment.
 
 ---
 
@@ -673,8 +810,15 @@ const supabaseAnonKey = 'eyJxxx'
 
 ### Stripe Price IDs
 ```javascript
+// Single browser
 const PRICE_MONTHLY = 'price_xxx'
-const PRICE_YEARLY = 'price_xxx'
+const PRICE_ANNUAL = 'price_xxx'
+const PRICE_LIFETIME = 'price_xxx'
+
+// All browsers bundle
+const PRICE_BUNDLE_MONTHLY = 'price_xxx'
+const PRICE_BUNDLE_ANNUAL = 'price_xxx'
+const PRICE_BUNDLE_LIFETIME = 'price_xxx'
 ```
 
 ---
@@ -682,18 +826,19 @@ const PRICE_YEARLY = 'price_xxx'
 ## Files to Create/Modify
 
 ### New Files
-- `lib/supabase.js` - Supabase client
-- `background/auth.js` - Authentication functions
-- `background/subscription.js` - Subscription/trial logic
+- `lib/supabase.js` - Supabase client with browser.storage adapter
+- `background/auth.js` - Authentication functions (signUp, signIn, signOut, Google OAuth)
+- `background/subscription.js` - Subscription/trial logic, platform detection
+- `styles/paywall.css` - Paywall modal styling
 - `supabase/functions/stripe-webhook/index.ts` - Webhook handler
-- `supabase/functions/create-checkout/index.ts` - Checkout session
+- `supabase/functions/create-checkout/index.ts` - Checkout session creator
 
 ### Modified Files
-- `manifest.json` - Add permissions
-- `background/background.js` - Handle auth messages
-- `content/content.js` - Add paywall checks
-- `popup/popup.html` - Add auth UI
-- `popup/popup.js` - Add auth logic
-- `popup/popup.css` - Style auth/trial UI
-- `dashboard/dashboard.html` - Add account section
-- `dashboard/dashboard.js` - Add subscription management
+- `manifest.json` - Add `identity` permission, `host_permissions` for Supabase
+- `background/background.js` - Handle auth/subscription messages
+- `content/content.js` - Add `checkCanCreate()` paywall check, `showPaywallModal()`
+- `popup/popup.html` - Add auth section, trial/pro badge
+- `popup/popup.js` - Add auth handlers, subscription status display
+- `popup/popup.css` - Style auth section, badges, trial status
+- `dashboard/dashboard.html` - Add account/subscription section
+- `dashboard/dashboard.js` - Add subscription management UI

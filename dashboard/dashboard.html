@@ -31,7 +31,13 @@
 
     <div class="toolbar">
       <div class="search-box">
-        <input type="text" id="search-input" placeholder="Search pages..." />
+        <div class="search-input-wrapper">
+          <input type="text" id="search-input" placeholder="Search pages..." />
+          <button class="search-clear-btn" id="search-clear" title="Clear search (Esc)">&times;</button>
+        </div>
+        <button class="search-mode-btn" id="search-mode-toggle" title="Toggle between searching pages and annotations">
+          Search Annotations
+        </button>
       </div>
       <div class="toolbar-actions">
         <select id="sort-select">
@@ -39,17 +45,55 @@
           <option value="most">Most Annotations</option>
           <option value="alpha">Alphabetical</option>
         </select>
-        <button class="toolbar-btn" id="btn-export" title="Export all annotations">
-          Export
+        <button class="toolbar-btn" id="btn-export" title="Export all annotations as JSON">
+          Export JSON
+        </button>
+        <button class="toolbar-btn" id="btn-export-md" title="Export all annotations as Markdown">
+          Export MD
         </button>
         <button class="toolbar-btn" id="btn-import" title="Import annotations from file">
           Import
         </button>
         <input type="file" id="import-file" accept=".json" style="display: none;" />
+        <button class="toolbar-btn" id="btn-manage-colors" title="Manage colors">
+          Colors
+        </button>
         <button class="toolbar-btn toolbar-btn-danger" id="btn-clear-db" title="Clear all data">
           Clear All
         </button>
       </div>
+    </div>
+
+    <div class="filters-bar" id="filters-bar" style="display: none;">
+      <div class="filter-group">
+        <span class="filter-label">Type:</span>
+        <button class="filter-chip" data-type="highlight">Highlights</button>
+        <button class="filter-chip" data-type="checkbox">Checkboxes</button>
+        <button class="filter-chip" data-type="page-note">Page Notes</button>
+        <button class="filter-chip" data-type="clipboard">Clipboard</button>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Color:</span>
+        <button class="filter-chip intent-action" data-intent="ACTION">Action</button>
+        <button class="filter-chip intent-question" data-intent="QUESTION">Question</button>
+        <button class="filter-chip intent-risk" data-intent="RISK">Risk</button>
+        <button class="filter-chip intent-reference" data-intent="REFERENCE">Reference</button>
+        <button class="filter-chip intent-custom" data-intent="CUSTOM">Custom</button>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Date:</span>
+        <button class="filter-chip" data-date="today">Today</button>
+        <button class="filter-chip" data-date="week">Last 7 days</button>
+        <button class="filter-chip" data-date="month">Last 30 days</button>
+      </div>
+      <button class="clear-filters-btn" id="clear-filters" style="display: none;">Clear Filters</button>
+    </div>
+
+    <div class="search-results" id="search-results" style="display: none;">
+      <div class="search-results-header">
+        <span id="search-result-count">0 annotations found</span>
+      </div>
+      <div class="search-results-list"></div>
     </div>
 
     <main class="page-list" id="page-list">

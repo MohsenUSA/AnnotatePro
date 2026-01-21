@@ -348,6 +348,7 @@
 
   // ============ Render Module ============
 
+  // Legacy intent colors - used as fallback for old annotations
   const INTENT_COLORS = {
     ACTION: 'rgba(255, 235, 59, 0.5)',
     QUESTION: 'rgba(100, 181, 246, 0.5)',
@@ -357,8 +358,34 @@
     DEFAULT: 'rgba(255, 235, 59, 0.5)'
   };
 
+  /**
+   * Get the highlight color for an annotation
+   * Prefers colorId, falls back to legacy color/intent
+   */
+  function getAnnotationColor(annotation) {
+    const { colorId, color, intent } = annotation;
+
+    // If explicit color is set (including transparent), use it
+    if (color) return color;
+
+    // If colorId is set, get color from cache
+    if (colorId) {
+      const colorObj = cachedColors.find(c => c.id === colorId);
+      if (colorObj) {
+        return hexToRgba(colorObj.color, 0.5);
+      }
+    }
+
+    // Legacy fallback: use intent
+    if (intent && INTENT_COLORS[intent]) {
+      return INTENT_COLORS[intent];
+    }
+
+    return INTENT_COLORS.DEFAULT;
+  }
+
   function applyHighlight(element, annotation) {
-    const { id, color, intent, textSnapshot, selectionStartOffset, selectionLength } = annotation;
+    const { id, textSnapshot, selectionStartOffset, selectionLength } = annotation;
 
     // Check if annotation already exists in DOM - prevent duplicates
     const existing = document.querySelector(`[data-annotatepro-id="${id}"]`);
@@ -370,7 +397,7 @@
       return applyTextHighlight(element, annotation);
     }
 
-    const highlightColor = color || INTENT_COLORS[intent] || INTENT_COLORS.DEFAULT;
+    const highlightColor = getAnnotationColor(annotation);
 
     element.setAttribute('data-annotatepro-id', id);
     element.setAttribute('data-annotatepro-type', 'highlight');
@@ -381,7 +408,7 @@
   }
 
   function applyTextHighlight(element, annotation) {
-    const { id, color, intent, textSnapshot } = annotation;
+    const { id, textSnapshot } = annotation;
 
     // Check if annotation already exists in DOM - prevent duplicates
     const existing = document.querySelector(`[data-annotatepro-id="${id}"]`);
@@ -389,8 +416,8 @@
       return existing;
     }
 
-    const hasTransparentColor = color === 'transparent';
-    const highlightColor = hasTransparentColor ? 'transparent' : (color || INTENT_COLORS[intent] || INTENT_COLORS.DEFAULT);
+    const highlightColor = getAnnotationColor(annotation);
+    const hasTransparentColor = highlightColor === 'transparent';
 
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let node;
@@ -483,9 +510,9 @@
   }
 
   function applyTextCheckbox(element, annotation) {
-    const { id, checked, note, textSnapshot, color, intent } = annotation;
-    const hasTransparentColor = color === 'transparent';
-    const checkboxColor = hasTransparentColor ? 'transparent' : (color || INTENT_COLORS[intent] || INTENT_COLORS.DEFAULT);
+    const { id, checked, note, textSnapshot } = annotation;
+    const checkboxColor = getAnnotationColor(annotation);
+    const hasTransparentColor = checkboxColor === 'transparent';
 
     // Check if already exists
     const existing = document.querySelector(`[data-annotatepro-checkbox-id="${id}"]`);
@@ -875,13 +902,31 @@
     return html;
   }
 
-  const COLOR_PRESETS = [
-    { name: 'Yellow', value: 'rgba(255, 235, 59, 0.5)' },
-    { name: 'Blue', value: 'rgba(100, 181, 246, 0.5)' },
-    { name: 'Red', value: 'rgba(239, 83, 80, 0.5)' },
-    { name: 'Green', value: 'rgba(129, 199, 132, 0.5)' },
-    { name: 'Purple', value: 'rgba(206, 147, 216, 0.5)' }
-  ];
+  /**
+   * Build color swatches HTML from cached colors
+   */
+  function buildColorSwatchesHTML(currentColorId, currentColor, isCheckbox = false) {
+    const hasNoColor = currentColor === 'transparent' || !currentColor;
+
+    let html = cachedColors.map(c => {
+      const colorValue = hexToRgba(c.color, 0.5);
+      const isActive = c.id === currentColorId || colorValue === currentColor;
+      return `
+        <button class="annotatepro-color-swatch ${isActive ? 'active' : ''}"
+                data-color-id="${c.id}"
+                data-color="${colorValue}"
+                title="${c.name}"
+                style="background: ${colorValue}"></button>
+      `;
+    }).join('');
+
+    // Add clear/transparent option for checkboxes
+    if (isCheckbox) {
+      html += `<button class="annotatepro-color-swatch annotatepro-color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>`;
+    }
+
+    return html;
+  }
 
   function createNoteEditor(annotation, anchorElement) {
     // Remove any existing editor
@@ -891,10 +936,8 @@
     editor.className = 'annotatepro-note-editor';
     editor.setAttribute('data-annotation-id', annotation.id);
 
-    const currentColor = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
-
+    const currentColor = getAnnotationColor(annotation);
     const isCheckbox = annotation.annotationType === 'checkbox';
-    const hasNoColor = !annotation.color || annotation.color === 'transparent';
 
     editor.innerHTML = `
       <div class="annotatepro-note-header">
@@ -903,13 +946,7 @@
         <button class="annotatepro-note-close" title="Close">&times;</button>
       </div>
       <div class="annotatepro-color-picker">
-        ${COLOR_PRESETS.map(c => `
-          <button class="annotatepro-color-swatch ${c.value === currentColor ? 'active' : ''}"
-                  data-color="${c.value}"
-                  title="${c.name}"
-                  style="background: ${c.value}"></button>
-        `).join('')}
-        ${isCheckbox ? `<button class="annotatepro-color-swatch annotatepro-color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
+        ${buildColorSwatchesHTML(annotation.colorId, annotation.color, isCheckbox)}
       </div>
       <div class="annotatepro-note-toolbar">
         <button class="annotatepro-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
@@ -960,15 +997,28 @@
     removeNoteModal();
     removeNoteEditor();
 
-    const currentColor = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
+    const currentColor = getAnnotationColor(annotation);
     const isCheckbox = annotation.annotationType === 'checkbox';
-    const hasNoColor = !annotation.color || annotation.color === 'transparent';
+    const hasNoColor = currentColor === 'transparent' || !annotation.colorId;
     const snippetText = annotation.textSnapshot || '(element annotation)';
     const modalTypeClass = isCheckbox ? 'annotatepro-checkbox-modal' : 'annotatepro-highlight-modal';
     const typeLabel = isCheckbox ? 'Checkbox' : 'Highlight';
 
     const overlay = document.createElement('div');
     overlay.className = 'annotatepro-note-modal-overlay';
+
+    // Build color swatches from cached colors
+    const colorSwatches = cachedColors.map(c => {
+      const colorValue = hexToRgba(c.color, 0.5);
+      const isActive = c.id === annotation.colorId || colorValue === currentColor;
+      return `
+        <button class="annotatepro-note-modal-color ${isActive ? 'active' : ''}"
+                data-color-id="${c.id}"
+                data-color="${colorValue}"
+                title="${c.name}"
+                style="background: ${colorValue}"></button>
+      `;
+    }).join('');
 
     overlay.innerHTML = `
       <div class="annotatepro-note-modal ${modalTypeClass}">
@@ -977,20 +1027,21 @@
           <span class="annotatepro-note-modal-status"></span>
           <button class="annotatepro-note-modal-close" title="Close">&times;</button>
         </div>
-        <div class="annotatepro-note-modal-snippet">${escapeHtml(snippetText.length > 150 ? snippetText.slice(0, 150) + '...' : snippetText)}</div>
+        <div class="annotatepro-note-modal-snippet-wrapper">
+          <div class="annotatepro-note-modal-snippet">${escapeHtml(snippetText.length > 150 ? snippetText.slice(0, 150) + '...' : snippetText)}</div>
+          <button class="annotatepro-note-modal-copy-btn snippet-copy" title="Copy text">Copy</button>
+        </div>
         <div class="annotatepro-note-modal-colors">
           <span class="annotatepro-note-modal-colors-label">Color:</span>
-          ${COLOR_PRESETS.map(c => `
-            <button class="annotatepro-note-modal-color ${c.value === currentColor ? 'active' : ''}"
-                    data-color="${c.value}"
-                    title="${c.name}"
-                    style="background: ${c.value}"></button>
-          `).join('')}
+          ${colorSwatches}
           <button class="annotatepro-note-modal-color annotatepro-note-modal-color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="Clear color">&times;</button>
         </div>
-        <div class="annotatepro-note-modal-toolbar">
-          <button class="annotatepro-note-modal-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
-          <button class="annotatepro-note-modal-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+        <div class="annotatepro-note-modal-toolbar-wrapper">
+          <div class="annotatepro-note-modal-toolbar">
+            <button class="annotatepro-note-modal-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+            <button class="annotatepro-note-modal-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+          </div>
+          <button class="annotatepro-note-modal-copy-btn note-copy" title="Copy note">Copy</button>
         </div>
         <div class="annotatepro-note-modal-body">
           <textarea class="annotatepro-note-modal-textarea"
@@ -1036,36 +1087,86 @@
     const doneBtn = overlay.querySelector('.close-btn');
     const statusEl = overlay.querySelector('.annotatepro-note-modal-status');
 
+    // Copy snippet button handler
+    const snippetCopyBtn = overlay.querySelector('.snippet-copy');
+    if (snippetCopyBtn && annotation.textSnapshot) {
+      snippetCopyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(annotation.textSnapshot);
+          snippetCopyBtn.textContent = 'Copied!';
+          snippetCopyBtn.classList.add('copied');
+          setTimeout(() => {
+            snippetCopyBtn.textContent = 'Copy';
+            snippetCopyBtn.classList.remove('copied');
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy snippet:', err);
+        }
+      });
+    }
+
+    // Copy note button handler
+    const noteCopyBtn = overlay.querySelector('.note-copy');
+    if (noteCopyBtn) {
+      noteCopyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const noteText = textarea ? textarea.value : '';
+        if (!noteText.trim()) {
+          noteCopyBtn.textContent = 'Empty';
+          setTimeout(() => { noteCopyBtn.textContent = 'Copy'; }, 1500);
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(noteText);
+          noteCopyBtn.textContent = 'Copied!';
+          noteCopyBtn.classList.add('copied');
+          setTimeout(() => {
+            noteCopyBtn.textContent = 'Copy';
+            noteCopyBtn.classList.remove('copied');
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy note:', err);
+        }
+      });
+    }
+
     // Color swatch click handlers
     overlay.querySelectorAll('.annotatepro-note-modal-color').forEach(swatch => {
       swatch.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const newColorId = swatch.dataset.colorId;
         const newColor = swatch.dataset.color;
 
         // Update active state
         overlay.querySelectorAll('.annotatepro-note-modal-color').forEach(s => s.classList.remove('active'));
         swatch.classList.add('active');
 
+        // Build patch - use colorId if available, otherwise color (for transparent)
+        const patch = newColorId ? { colorId: newColorId, color: null } : { colorId: null, color: newColor };
+
         // Update annotation color
         try {
           statusEl.textContent = 'Saving...';
           await sendMessage(MessageType.UPDATE_ANNOTATION, {
             id: annotation.id,
-            patch: { color: newColor }
+            patch
           });
 
-          annotation.color = newColor;
+          annotation.colorId = newColorId || null;
+          annotation.color = newColorId ? null : newColor;
 
           // Update the element on the page
           const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotation.id}"]`);
           if (annotatedEl) {
-            if (newColor === 'transparent') {
+            const displayColor = newColorId ? hexToRgba(getColorById(newColorId)?.color || '#FFEB3B', 0.5) : newColor;
+            if (displayColor === 'transparent') {
               annotatedEl.style.removeProperty('--annotatepro-color');
               annotatedEl.style.backgroundColor = 'transparent';
             } else {
-              annotatedEl.style.setProperty('--annotatepro-color', newColor);
+              annotatedEl.style.setProperty('--annotatepro-color', displayColor);
               if (annotatedEl.classList.contains('annotatepro-checkbox-text')) {
-                annotatedEl.style.backgroundColor = newColor;
+                annotatedEl.style.backgroundColor = displayColor;
               }
             }
           }
@@ -1154,52 +1255,10 @@
   let pageNoteData = null; // Stores the page note annotation
 
   /**
-   * Create or update the page note bubble at bottom-right of page
+   * Update page note bubble - disabled, page note access moved to sidebar/popup
    */
   function updatePageNoteBubble() {
-    if (pageNoteData && pageNoteData.note && pageNoteData.note.trim()) {
-      // Show bubble if there's a page note
-      if (!pageNoteBubble) {
-        createPageNoteBubble();
-      }
-    } else {
-      // Remove bubble if no page note
-      if (pageNoteBubble) {
-        pageNoteBubble.remove();
-        pageNoteBubble = null;
-      }
-    }
-  }
-
-  /**
-   * Create the page note bubble element
-   */
-  function createPageNoteBubble() {
-    if (pageNoteBubble) return;
-
-    pageNoteBubble = document.createElement('div');
-    pageNoteBubble.className = 'annotatepro-page-note-bubble';
-    pageNoteBubble.title = 'Page Note';
-
-    document.body.appendChild(pageNoteBubble);
-
-    // Hover to show tooltip preview
-    pageNoteBubble.addEventListener('mouseenter', () => {
-      if (pageNoteData?.note) {
-        showPageNoteTooltip(pageNoteData.note);
-      }
-    });
-
-    pageNoteBubble.addEventListener('mouseleave', () => {
-      hidePageNoteTooltip();
-    });
-
-    // Click to open page note modal
-    pageNoteBubble.addEventListener('click', (e) => {
-      e.stopPropagation();
-      hidePageNoteTooltip();
-      openPageNoteModal();
-    });
+    // Page note bubble removed - access via sidebar or popup instead
   }
 
   /**
@@ -1305,9 +1364,12 @@
           <button class="annotatepro-note-modal-close" title="Close">&times;</button>
         </div>
         <div class="annotatepro-note-modal-snippet">Notes for this page</div>
-        <div class="annotatepro-note-modal-toolbar">
-          <button class="annotatepro-note-modal-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
-          <button class="annotatepro-note-modal-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+        <div class="annotatepro-note-modal-toolbar-wrapper">
+          <div class="annotatepro-note-modal-toolbar">
+            <button class="annotatepro-note-modal-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+            <button class="annotatepro-note-modal-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+          </div>
+          <button class="annotatepro-note-modal-copy-btn note-copy" title="Copy note">Copy</button>
         </div>
         <div class="annotatepro-note-modal-body">
           <textarea class="annotatepro-note-modal-textarea"
@@ -1340,6 +1402,31 @@
         textarea.focus();
       });
     });
+
+    // Copy note button handler
+    const noteCopyBtn = overlay.querySelector('.note-copy');
+    if (noteCopyBtn) {
+      noteCopyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const noteContent = textarea ? textarea.value : '';
+        if (!noteContent.trim()) {
+          noteCopyBtn.textContent = 'Empty';
+          setTimeout(() => { noteCopyBtn.textContent = 'Copy'; }, 1500);
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(noteContent);
+          noteCopyBtn.textContent = 'Copied!';
+          noteCopyBtn.classList.add('copied');
+          setTimeout(() => {
+            noteCopyBtn.textContent = 'Copy';
+            noteCopyBtn.classList.remove('copied');
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy note:', err);
+        }
+      });
+    }
 
     // Auto-save with debounce
     let saveTimer;
@@ -1409,11 +1496,15 @@
     editor.querySelectorAll('.annotatepro-color-swatch').forEach(swatch => {
       swatch.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const newColorId = swatch.dataset.colorId;
         const newColor = swatch.dataset.color;
 
         // Update active state
         editor.querySelectorAll('.annotatepro-color-swatch').forEach(s => s.classList.remove('active'));
         swatch.classList.add('active');
+
+        // Build patch - use colorId if available, otherwise color (for transparent)
+        const patch = newColorId ? { colorId: newColorId, color: null } : { colorId: null, color: newColor };
 
         // Update annotation color
         try {
@@ -1422,18 +1513,20 @@
 
           await sendMessage(MessageType.UPDATE_ANNOTATION, {
             id: annotation.id,
-            patch: { color: newColor }
+            patch
           });
 
-          annotation.color = newColor;
+          annotation.colorId = newColorId || null;
+          annotation.color = newColorId ? null : newColor;
 
           // Update the element on the page (highlight or checkbox wrapper)
           const annotatedEl = document.querySelector(`[data-annotatepro-id="${annotation.id}"]`);
           if (annotatedEl) {
-            if (newColor === 'transparent') {
+            const displayColor = newColorId ? hexToRgba(getColorById(newColorId)?.color || '#FFEB3B', 0.5) : newColor;
+            if (displayColor === 'transparent') {
               annotatedEl.style.setProperty('--annotatepro-color', 'transparent');
             } else {
-              annotatedEl.style.setProperty('--annotatepro-color', newColor);
+              annotatedEl.style.setProperty('--annotatepro-color', displayColor);
             }
           }
 
@@ -1530,8 +1623,157 @@
     UPDATE_ANNOTATION: 'UPDATE_ANNOTATION',
     DELETE_ANNOTATION: 'DELETE_ANNOTATION',
     GET_PAGE_ANNOTATIONS: 'GET_PAGE_ANNOTATIONS',
-    GET_ANNOTATION: 'GET_ANNOTATION'
+    GET_ANNOTATION: 'GET_ANNOTATION',
+    GET_ALL_COLORS: 'GET_ALL_COLORS',
+    ADD_COLOR: 'ADD_COLOR'
   };
+
+  // Cache for colors loaded from database
+  let cachedColors = [];
+  let colorsLoaded = false;
+
+  // Clipboard history tracking
+  const MAX_CLIPBOARD_ENTRIES = 50;
+  let clipboardHistory = [];
+
+  /**
+   * Load clipboard history from storage
+   */
+  async function loadClipboardHistoryFromStorage() {
+    try {
+      const result = await browser.storage.local.get('clipboardHistory');
+      if (result.clipboardHistory && Array.isArray(result.clipboardHistory)) {
+        clipboardHistory = result.clipboardHistory;
+        window.__annotateProClipboardHistory = clipboardHistory;
+      }
+    } catch (error) {
+      console.error('AnnotatePro: Failed to load clipboard history', error);
+    }
+  }
+
+  /**
+   * Save clipboard history to storage
+   */
+  async function saveClipboardHistoryToStorage() {
+    try {
+      await browser.storage.local.set({ clipboardHistory });
+    } catch (error) {
+      console.error('AnnotatePro: Failed to save clipboard history', error);
+    }
+  }
+
+  /**
+   * Set up clipboard tracking
+   * Listens for copy events and stores text in history
+   */
+  async function setupClipboardTracking() {
+    // Load existing history from storage
+    await loadClipboardHistoryFromStorage();
+
+    document.addEventListener('copy', async () => {
+      // Get the copied text from selection
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) return;
+
+      const text = selection.toString().trim();
+      if (!text || text.length === 0) return;
+
+      // Don't duplicate if same as most recent
+      if (clipboardHistory.length > 0 && clipboardHistory[0].text === text) {
+        return;
+      }
+
+      // Add to history
+      clipboardHistory.unshift({
+        text,
+        timestamp: Date.now(),
+        pageUrl: getPageUrl(),
+        pageTitle: document.title
+      });
+
+      // Trim to max entries
+      if (clipboardHistory.length > MAX_CLIPBOARD_ENTRIES) {
+        clipboardHistory = clipboardHistory.slice(0, MAX_CLIPBOARD_ENTRIES);
+      }
+
+      // Expose to window for sidebar access
+      window.__annotateProClipboardHistory = clipboardHistory;
+
+      // Save to storage
+      await saveClipboardHistoryToStorage();
+
+      // Notify sidebar of update
+      window.dispatchEvent(new CustomEvent('annotatepro-clipboard-updated'));
+    });
+
+    // Initialize window property
+    window.__annotateProClipboardHistory = clipboardHistory;
+  }
+
+  /**
+   * Get clipboard history (for sidebar)
+   */
+  function getClipboardHistory() {
+    return clipboardHistory;
+  }
+
+  /**
+   * Load colors from the database
+   */
+  async function loadColors() {
+    try {
+      cachedColors = await sendMessage(MessageType.GET_ALL_COLORS, {});
+      cachedColors.sort((a, b) => a.sortOrder - b.sortOrder);
+      colorsLoaded = true;
+      return cachedColors;
+    } catch (error) {
+      console.error('AnnotatePro: Failed to load colors', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get color by ID from cache
+   */
+  function getColorById(colorId) {
+    return cachedColors.find(c => c.id === colorId);
+  }
+
+  /**
+   * Get the actual color value (with alpha) for rendering
+   */
+  function getColorValue(colorId, fallbackColor = null) {
+    if (fallbackColor) return fallbackColor;
+    const color = getColorById(colorId);
+    if (color) {
+      // Convert hex to rgba with 0.5 alpha for highlights
+      return hexToRgba(color.color, 0.5);
+    }
+    // Default yellow if no color found
+    return 'rgba(255, 235, 59, 0.5)';
+  }
+
+  /**
+   * Convert hex color to rgba
+   */
+  function hexToRgba(hex, alpha = 0.5) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    if (result) {
+      const r = parseInt(result[1], 16);
+      const g = parseInt(result[2], 16);
+      const b = parseInt(result[3], 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    return hex;
+  }
+
+  /**
+   * Get default color ID
+   */
+  function getDefaultColorId() {
+    const defaultColor = cachedColors.find(c => c.id === 'default-action') || cachedColors[0];
+    return defaultColor?.id || 'default-action';
+  }
 
   const attachedAnnotations = new Set();
 
@@ -1575,7 +1817,7 @@
     }
   }
 
-  async function createHighlight(intent = 'DEFAULT', color = null) {
+  async function createHighlight(colorId = null, color = null) {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) {
       return null;
@@ -1584,12 +1826,15 @@
     const fingerprint = createSelectionFingerprint(selection);
     if (!fingerprint) return null;
 
+    // Use provided colorId, or default to first color if none specified
+    const effectiveColorId = colorId || getDefaultColorId();
+
     const annotation = {
       ...fingerprint,
       pageUrl: getPageUrl(),
       annotationType: 'highlight',
-      intent,
-      color: color,
+      colorId: color === 'transparent' ? null : effectiveColorId,
+      color: color, // Only used for transparent
       note: ''
     };
 
@@ -1814,14 +2059,18 @@
         }
       }
 
+      // Number keys 1-9 select colors by sort order
       if (!e.ctrlKey && !e.altKey && !e.metaKey) {
-        const intents = ['ACTION', 'QUESTION', 'RISK', 'REFERENCE', 'CUSTOM'];
         const num = parseInt(e.key);
-        if (num >= 1 && num <= 5) {
+        if (num >= 1 && num <= 9 && cachedColors.length > 0) {
           const selection = window.getSelection();
           if (selection && !selection.isCollapsed) {
             e.preventDefault();
-            await createHighlight(intents[num - 1]);
+            const colorIndex = num - 1;
+            const color = cachedColors[colorIndex];
+            if (color) {
+              await createHighlight(color.id);
+            }
           }
         }
       }
@@ -1905,7 +2154,23 @@
   browser.runtime.onMessage.addListener((message) => {
     switch (message.type) {
       case 'COMMAND_HIGHLIGHT':
-        createHighlight(message.intent || 'DEFAULT');
+        // Support both old intent-based and new colorId-based messages
+        if (message.colorId) {
+          createHighlight(message.colorId);
+        } else if (message.intent) {
+          // Legacy: map intent to color ID
+          const intentToColorId = {
+            'ACTION': 'default-action',
+            'QUESTION': 'default-question',
+            'RISK': 'default-risk',
+            'REFERENCE': 'default-reference',
+            'CUSTOM': 'default-action',
+            'DEFAULT': 'default-action'
+          };
+          createHighlight(intentToColorId[message.intent] || 'default-action');
+        } else {
+          createHighlight();
+        }
         break;
 
       case 'COMMAND_CHECKBOX':
@@ -2004,7 +2269,7 @@
           // First, check if there's selected text - create annotation with note (no highlight by default)
           const selection = window.getSelection();
           if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
-            const saved = await createHighlight('DEFAULT', 'transparent');
+            const saved = await createHighlight(null, 'transparent');
             if (saved) {
               createNoteModal(saved);
             }
@@ -2071,13 +2336,23 @@
           }
 
           // Handle specific patch updates
-          if (message.patch.color !== undefined) {
+          if (message.patch.colorId !== undefined || message.patch.color !== undefined) {
             const colorEl = document.querySelector(`[data-annotatepro-id="${message.annotationId}"]`);
             if (colorEl) {
-              if (message.patch.color === 'transparent') {
-                colorEl.style.setProperty('--annotatepro-color', 'transparent');
-              } else {
-                colorEl.style.setProperty('--annotatepro-color', message.patch.color);
+              let displayColor;
+              if (message.patch.colorId) {
+                const colorObj = getColorById(message.patch.colorId);
+                displayColor = colorObj ? hexToRgba(colorObj.color, 0.5) : 'rgba(255, 235, 59, 0.5)';
+              } else if (message.patch.color) {
+                displayColor = message.patch.color;
+              }
+
+              if (displayColor) {
+                if (displayColor === 'transparent') {
+                  colorEl.style.setProperty('--annotatepro-color', 'transparent');
+                } else {
+                  colorEl.style.setProperty('--annotatepro-color', displayColor);
+                }
               }
             }
           }
@@ -2121,6 +2396,17 @@
         pageNoteData = null;
         updatePageNoteBubble();
         break;
+
+      // Color management events - refresh cache
+      case 'COLOR_ADDED':
+      case 'COLOR_UPDATED':
+      case 'COLOR_DELETED':
+        loadColors();
+        break;
+
+      case 'GET_CLIPBOARD_HISTORY':
+        // Return clipboard history to popup
+        return Promise.resolve(clipboardHistory);
     }
   });
 
@@ -2200,8 +2486,12 @@
       });
     }
 
+    // Load colors first so they're available for rendering
+    await loadColors();
+
     setupKeyboardShortcuts();
     setupMutationObserver();
+    await setupClipboardTracking();
     await loadAnnotations();
     await loadPageNote();
 

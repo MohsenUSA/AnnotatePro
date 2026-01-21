@@ -9,14 +9,122 @@
   let allPages = [];
   let currentSort = 'recent';
   let searchQuery = '';
+  let searchMode = 'pages'; // 'pages' or 'annotations'
+  let searchResults = [];
+  let activeFilters = { types: [], colorIds: [], dateRange: null };
+  let searchDebounceTimer = null;
+  let cachedColors = [];
 
-  const COLOR_PRESETS = [
-    { name: 'Yellow', value: 'rgba(255, 235, 59, 0.5)' },
-    { name: 'Blue', value: 'rgba(100, 181, 246, 0.5)' },
-    { name: 'Red', value: 'rgba(239, 83, 80, 0.5)' },
-    { name: 'Green', value: 'rgba(129, 199, 132, 0.5)' },
-    { name: 'Purple', value: 'rgba(206, 147, 216, 0.5)' }
-  ];
+  // Legacy intent names for backwards compatibility
+  const INTENT_NAMES = {
+    ACTION: 'Action (Yellow)',
+    QUESTION: 'Question (Blue)',
+    RISK: 'Risk (Red)',
+    REFERENCE: 'Reference (Green)',
+    CUSTOM: 'Custom (Purple)',
+    DEFAULT: 'Action (Yellow)'
+  };
+
+  // Legacy intent colors for backwards compatibility
+  const INTENT_COLORS = {
+    ACTION: 'rgba(255, 235, 59, 0.5)',
+    QUESTION: 'rgba(100, 181, 246, 0.5)',
+    RISK: 'rgba(239, 83, 80, 0.5)',
+    REFERENCE: 'rgba(129, 199, 132, 0.5)',
+    CUSTOM: 'rgba(206, 147, 216, 0.5)',
+    DEFAULT: 'rgba(255, 235, 59, 0.5)'
+  };
+
+  /**
+   * Convert hex color to rgba
+   */
+  function hexToRgba(hex, alpha = 0.5) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    if (result) {
+      const r = parseInt(result[1], 16);
+      const g = parseInt(result[2], 16);
+      const b = parseInt(result[3], 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    return hex;
+  }
+
+  /**
+   * Get color by ID from cache
+   */
+  function getColorById(colorId) {
+    return cachedColors.find(c => c.id === colorId);
+  }
+
+  /**
+   * Get display color for an annotation (prefers colorId, falls back to legacy)
+   */
+  function getAnnotationColor(annotation) {
+    const { colorId, color, intent } = annotation;
+    if (color) return color;
+    if (colorId) {
+      const colorObj = getColorById(colorId);
+      if (colorObj) return hexToRgba(colorObj.color, 0.5);
+    }
+    if (intent && INTENT_COLORS[intent]) return INTENT_COLORS[intent];
+    return INTENT_COLORS.DEFAULT;
+  }
+
+  /**
+   * Get color name for an annotation
+   */
+  function getAnnotationColorName(annotation) {
+    const { colorId, intent } = annotation;
+    if (colorId) {
+      const colorObj = getColorById(colorId);
+      if (colorObj) return colorObj.name;
+    }
+    if (intent && INTENT_NAMES[intent]) return INTENT_NAMES[intent];
+    return 'Default';
+  }
+
+  /**
+   * Load colors from the database
+   */
+  async function loadColors() {
+    try {
+      cachedColors = await sendMessage('GET_ALL_COLORS', {});
+      cachedColors.sort((a, b) => a.sortOrder - b.sortOrder);
+
+      // Update color filter chips dynamically
+      updateColorFilterChips();
+    } catch (error) {
+      console.error('Failed to load colors:', error);
+      cachedColors = [];
+    }
+  }
+
+  /**
+   * Update color filter chips based on cached colors
+   */
+  function updateColorFilterChips() {
+    const colorGroup = document.querySelector('.filter-group:has([data-intent])');
+    if (!colorGroup) return;
+
+    // Get label and clear button container
+    const label = colorGroup.querySelector('.filter-label');
+    label.textContent = 'Color:';
+
+    // Remove old chips
+    const oldChips = colorGroup.querySelectorAll('.filter-chip');
+    oldChips.forEach(chip => chip.remove());
+
+    // Add new chips for each color
+    for (const color of cachedColors) {
+      const chip = document.createElement('button');
+      chip.className = 'filter-chip';
+      chip.dataset.colorId = color.id;
+      chip.textContent = color.name;
+      chip.style.setProperty('--chip-color', hexToRgba(color.color, 0.3));
+      chip.addEventListener('click', () => toggleFilter('colorIds', color.id));
+      colorGroup.appendChild(chip);
+    }
+  }
 
   // DOM Elements
   const pageListEl = document.getElementById('page-list');
@@ -79,7 +187,7 @@
     card.className = 'page-card';
     card.dataset.url = page.pageUrl;
 
-    const totalCount = page.highlightCount + page.checkboxCount + (page.pageNoteCount || 0);
+    const totalCount = page.highlightCount + page.checkboxCount + (page.pageNoteCount || 0) + (page.clipboardCount || 0);
     const domain = getDomain(page.pageUrl);
 
     card.innerHTML = `
@@ -94,16 +202,13 @@
           <h3 class="page-title">${escapeHtml(truncate(page.title, 60))}</h3>
           <p class="page-url">${escapeHtml(truncate(page.pageUrl, 80))}</p>
         </div>
+        <span class="page-time">${formatRelativeTime(page.lastUpdated)}</span>
       </div>
-      <div class="page-card-footer">
-        <div class="page-stats">
-          ${page.highlightCount > 0 ? `<span class="page-stat highlight-stat">${page.highlightCount} highlights</span>` : ''}
-          ${page.checkboxCount > 0 ? `<span class="page-stat checkbox-stat">${page.checkedCount || 0}/${page.checkboxCount} checked</span>` : ''}
-          ${page.pageNoteCount > 0 ? `<span class="page-stat pagenote-stat">${page.pageNoteCount} page note${page.pageNoteCount > 1 ? 's' : ''}</span>` : ''}
-        </div>
-        <div class="page-meta">
-          <span class="page-time">${formatRelativeTime(page.lastUpdated)}</span>
-        </div>
+      <div class="page-card-stats">
+        ${page.highlightCount > 0 ? `<span class="page-stat highlight-stat"><span class="stat-icon">🖍️</span><span class="stat-value">${page.highlightCount}</span><span class="stat-label">highlights</span></span>` : ''}
+        ${page.checkboxCount > 0 ? `<span class="page-stat checkbox-stat"><span class="stat-icon">☑️</span><span class="stat-value">${page.checkedCount || 0}/${page.checkboxCount}</span><span class="stat-label">checked</span></span>` : ''}
+        ${page.pageNoteCount > 0 ? `<span class="page-stat pagenote-stat"><span class="stat-icon">📄</span><span class="stat-value">${page.pageNoteCount}</span><span class="stat-label">page note${page.pageNoteCount > 1 ? 's' : ''}</span></span>` : ''}
+        ${page.clipboardCount > 0 ? `<span class="page-stat clipboard-stat"><span class="stat-icon">📋</span><span class="stat-value">${page.clipboardCount}</span><span class="stat-label">clipboard</span></span>` : ''}
       </div>
       <div class="page-card-actions">
         <button class="action-btn open-btn" title="Open page">Open</button>
@@ -145,12 +250,26 @@
   async function showPageAnnotations(page) {
     const annotations = await sendMessage('GET_PAGE_ANNOTATIONS', { pageUrl: page.pageUrl });
 
+    // Load clipboard items for this page
+    let clipboardItems = [];
+    try {
+      const { clipboardHistory = [] } = await browser.storage.local.get('clipboardHistory');
+      clipboardItems = clipboardHistory.filter(item => item.pageUrl === page.pageUrl);
+    } catch (e) {
+      console.error('Failed to load clipboard history:', e);
+    }
+
     // Sort annotations: page notes first, then by updated time
     const sortedAnnotations = [...annotations].sort((a, b) => {
       if (a.annotationType === 'page-note' && b.annotationType !== 'page-note') return -1;
       if (a.annotationType !== 'page-note' && b.annotationType === 'page-note') return 1;
       return (b.updatedAt || 0) - (a.updatedAt || 0);
     });
+
+    // Sort clipboard items by timestamp (newest first)
+    clipboardItems.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    const hasContent = sortedAnnotations.length > 0 || clipboardItems.length > 0;
 
     // Create modal
     const modal = document.createElement('div');
@@ -162,23 +281,46 @@
           <button class="modal-close">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="annotation-list">
-            ${sortedAnnotations.map(a => `
-              <div class="annotation-item ${a.annotationType}" data-id="${a.id}">
-                ${a.annotationType === 'checkbox'
-                  ? `<input type="checkbox" class="annotation-checkbox" ${a.checked ? 'checked' : ''} data-id="${a.id}">`
-                  : `<div class="annotation-type-badge">${a.annotationType === 'page-note' ? '📄' : '🖍️'}</div>`
-                }
-                <div class="annotation-content clickable" data-annotation='${escapeAttr(JSON.stringify(a))}'>
-                  <p class="annotation-text">${escapeHtml(truncate(a.annotationType === 'page-note' ? 'Page Note' : (a.textSnapshot || '(element)'), 100))}</p>
-                  <span class="annotation-time">${formatRelativeTime(a.updatedAt)}</span>
+          ${sortedAnnotations.length > 0 ? `
+          <div class="modal-section">
+            <h3 class="modal-section-title">Annotations</h3>
+            <div class="annotation-list">
+              ${sortedAnnotations.map(a => `
+                <div class="annotation-item ${a.annotationType}" data-id="${a.id}">
+                  ${a.annotationType === 'checkbox'
+                    ? `<input type="checkbox" class="annotation-checkbox" ${a.checked ? 'checked' : ''} data-id="${a.id}">`
+                    : `<div class="annotation-type-badge">${a.annotationType === 'page-note' ? '📄' : '🖍️'}</div>`
+                  }
+                  <div class="annotation-content clickable" data-annotation='${escapeAttr(JSON.stringify(a))}'>
+                    <p class="annotation-text">${escapeHtml(truncate(a.annotationType === 'page-note' ? 'Page Note' : (a.textSnapshot || '(element)'), 100))}</p>
+                    <span class="annotation-time">${formatRelativeTime(a.updatedAt)}</span>
+                  </div>
+                  ${a.note && a.note.trim() ? '<span class="annotation-note-icon" title="Has note">📝</span>' : ''}
+                  <button class="annotation-delete" title="Delete">&times;</button>
                 </div>
-                ${a.note && a.note.trim() ? '<span class="annotation-note-icon" title="Has note">📝</span>' : ''}
-                <button class="annotation-delete" title="Delete">&times;</button>
-              </div>
-            `).join('')}
-            ${sortedAnnotations.length === 0 ? '<p class="no-annotations">No annotations on this page.</p>' : ''}
+              `).join('')}
+            </div>
           </div>
+          ` : ''}
+          ${clipboardItems.length > 0 ? `
+          <div class="modal-section">
+            <h3 class="modal-section-title">Clipboard History</h3>
+            <div class="clipboard-list">
+              ${clipboardItems.map((item, index) => `
+                <div class="clipboard-item" data-index="${index}">
+                  <div class="annotation-type-badge">📋</div>
+                  <div class="clipboard-content">
+                    <p class="clipboard-text">${escapeHtml(truncate(item.text, 100))}</p>
+                    <span class="annotation-time">${formatRelativeTime(item.timestamp)}</span>
+                  </div>
+                  <button class="clipboard-copy" title="Copy to clipboard">Copy</button>
+                  <button class="clipboard-delete" title="Delete">&times;</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : ''}
+          ${!hasContent ? '<p class="no-annotations">No content on this page.</p>' : ''}
         </div>
       </div>
     `;
@@ -246,6 +388,63 @@
           showAnnotationDetail(annotation);
         } catch (err) {
           console.error('Failed to parse annotation data:', err);
+        }
+      });
+    });
+
+    // Copy clipboard item
+    modal.querySelectorAll('.clipboard-copy').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = btn.closest('.clipboard-item');
+        const index = parseInt(item.dataset.index, 10);
+        const clipboardItem = clipboardItems[index];
+        if (clipboardItem) {
+          try {
+            await navigator.clipboard.writeText(clipboardItem.text);
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+          } catch (err) {
+            console.error('Failed to copy:', err);
+          }
+        }
+      });
+    });
+
+    // Delete clipboard item
+    modal.querySelectorAll('.clipboard-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Delete this clipboard item?')) return;
+
+        const item = btn.closest('.clipboard-item');
+        const index = parseInt(item.dataset.index, 10);
+
+        try {
+          const { clipboardHistory = [] } = await browser.storage.local.get('clipboardHistory');
+          // Find and remove the item by matching text and timestamp
+          const itemToRemove = clipboardItems[index];
+          const newHistory = clipboardHistory.filter(h =>
+            !(h.text === itemToRemove.text && h.timestamp === itemToRemove.timestamp && h.pageUrl === itemToRemove.pageUrl)
+          );
+          await browser.storage.local.set({ clipboardHistory: newHistory });
+
+          // Update local array and remove from DOM
+          clipboardItems.splice(index, 1);
+          item.remove();
+          loadPages();
+
+          // Update indices for remaining items
+          modal.querySelectorAll('.clipboard-item').forEach((el, i) => {
+            el.dataset.index = i;
+          });
+
+          // Close modal if no content left
+          if (modal.querySelectorAll('.annotation-item, .clipboard-item').length === 0) {
+            modal.remove();
+          }
+        } catch (err) {
+          console.error('Failed to delete clipboard item:', err);
         }
       });
     });
@@ -328,13 +527,29 @@
     const isPageNote = annotation.annotationType === 'page-note';
     const isCheckbox = annotation.annotationType === 'checkbox';
     const typeLabel = isPageNote ? 'Page Note' : (isCheckbox ? 'Checkbox' : 'Highlight');
-    const intentLabel = annotation.intent && annotation.intent !== 'DEFAULT' ? ` (${annotation.intent})` : '';
+    const colorName = getAnnotationColorName(annotation);
+    const colorLabel = colorName !== 'Default' ? ` (${colorName})` : '';
     const modalTypeClass = isPageNote ? 'page-note-modal' : (isCheckbox ? 'checkbox-modal' : 'highlight-modal');
+
+    // Build color swatches from cached colors
+    const currentColor = getAnnotationColor(annotation);
+    const hasNoColor = currentColor === 'transparent' || !annotation.colorId;
+    const colorSwatches = cachedColors.map(c => {
+      const colorValue = hexToRgba(c.color, 0.5);
+      const isActive = c.id === annotation.colorId || colorValue === currentColor;
+      return `
+        <button class="detail-color-swatch ${isActive ? 'active' : ''}"
+                data-color-id="${c.id}"
+                data-color="${colorValue}"
+                title="${c.name}"
+                style="background: ${colorValue}"></button>
+      `;
+    }).join('');
 
     detailModal.innerHTML = `
       <div class="modal detail-modal annotation-detail-modal ${modalTypeClass}">
         <div class="modal-header annotation-detail-header ${modalTypeClass}-header">
-          <h2>${typeLabel}${intentLabel}</h2>
+          <h2>${typeLabel}${colorLabel}</h2>
           <button class="modal-close">&times;</button>
         </div>
         <div class="modal-body">
@@ -362,13 +577,8 @@
               <span class="color-edit-status"></span>
             </div>
             <div class="detail-color-picker">
-              ${COLOR_PRESETS.map(c => `
-                <button class="detail-color-swatch ${c.value === (annotation.color || 'rgba(255, 235, 59, 0.5)') ? 'active' : ''}"
-                        data-color="${c.value}"
-                        title="${c.name}"
-                        style="background: ${c.value}"></button>
-              `).join('')}
-              ${isCheckbox ? `<button class="detail-color-swatch detail-color-clear ${!annotation.color || annotation.color === 'transparent' ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
+              ${colorSwatches}
+              ${isCheckbox ? `<button class="detail-color-swatch detail-color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
             </div>
           </div>
           ` : ''}
@@ -377,14 +587,17 @@
               <h3>NOTE</h3>
               <span class="note-edit-status"></span>
             </div>
-            <div class="note-toolbar">
-              <button class="note-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
-              <button class="note-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+            <div class="note-input-wrapper">
+              <button class="copy-btn note-copy-btn" title="Copy note to clipboard">Copy</button>
+              <div class="note-toolbar">
+                <button class="note-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+                <button class="note-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+              </div>
+              <textarea class="detail-note-textarea"
+                        placeholder="${isPageNote ? 'Write notes about this page...' : 'Add a note to this annotation...'}"
+                        autocapitalize="sentences"
+                        rows="4">${escapeHtml(annotation.note || '')}</textarea>
             </div>
-            <textarea class="detail-note-textarea"
-                      placeholder="${isPageNote ? 'Write notes about this page...' : 'Add a note to this annotation...'}"
-                      autocapitalize="sentences"
-                      rows="4">${escapeHtml(annotation.note || '')}</textarea>
           </div>
           <div class="detail-section detail-timestamps">
             <div class="detail-timestamp">
@@ -400,8 +613,8 @@
       </div>
     `;
 
-    // Copy button handler
-    const copyBtn = detailModal.querySelector('.copy-btn');
+    // Copy button handler for full text
+    const copyBtn = detailModal.querySelector('.detail-section-header .copy-btn:not(.note-copy-btn)');
     if (copyBtn && annotation.textSnapshot) {
       copyBtn.addEventListener('click', async () => {
         try {
@@ -418,15 +631,44 @@
       });
     }
 
+    // Copy button handler for note
+    const noteCopyBtn = detailModal.querySelector('.note-copy-btn');
+    if (noteCopyBtn) {
+      noteCopyBtn.addEventListener('click', async () => {
+        const noteTextarea = detailModal.querySelector('.detail-note-textarea');
+        const noteText = noteTextarea ? noteTextarea.value : '';
+        if (!noteText.trim()) {
+          noteCopyBtn.textContent = 'Empty';
+          setTimeout(() => { noteCopyBtn.textContent = 'Copy'; }, 1500);
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(noteText);
+          noteCopyBtn.textContent = 'Copied!';
+          noteCopyBtn.classList.add('copied');
+          setTimeout(() => {
+            noteCopyBtn.textContent = 'Copy';
+            noteCopyBtn.classList.remove('copied');
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy note:', err);
+        }
+      });
+    }
+
     // Color picker handlers
     const colorStatus = detailModal.querySelector('.color-edit-status');
     detailModal.querySelectorAll('.detail-color-swatch').forEach(swatch => {
       swatch.addEventListener('click', async () => {
+        const newColorId = swatch.dataset.colorId;
         const newColor = swatch.dataset.color;
 
         // Update active state
         detailModal.querySelectorAll('.detail-color-swatch').forEach(s => s.classList.remove('active'));
         swatch.classList.add('active');
+
+        // Build patch - use colorId if available, otherwise color (for transparent)
+        const patch = newColorId ? { colorId: newColorId, color: null } : { colorId: null, color: newColor };
 
         // Save color
         try {
@@ -435,14 +677,19 @@
 
           await sendMessage('UPDATE_ANNOTATION', {
             id: annotation.id,
-            patch: { color: newColor }
+            patch
           });
-          annotation.color = newColor;
+          annotation.colorId = newColorId || null;
+          annotation.color = newColorId ? null : newColor;
+
+          // Get display color for UI update
+          const displayColor = newColorId ? hexToRgba(getColorById(newColorId)?.color || '#FFEB3B', 0.5) : newColor;
 
           // Update color in annotation list
           const listItem = document.querySelector(`.annotation-item[data-id="${annotation.id}"]`);
           if (listItem) {
-            listItem.querySelector('.annotation-color').style.background = newColor;
+            const colorEl = listItem.querySelector('.annotation-color');
+            if (colorEl) colorEl.style.background = displayColor;
           }
 
           // Tell content script on matching page to update color
@@ -453,7 +700,7 @@
                 browser.tabs.sendMessage(tab.id, {
                   type: 'COMMAND_UPDATE_COLOR',
                   annotationId: annotation.id,
-                  color: newColor
+                  color: displayColor
                 }).catch(() => {});
               }
             }
@@ -576,7 +823,7 @@
         filtered.sort((a, b) => b.lastUpdated - a.lastUpdated);
         break;
       case 'most':
-        filtered.sort((a, b) => (b.highlightCount + b.checkboxCount + (b.pageNoteCount || 0)) - (a.highlightCount + a.checkboxCount + (a.pageNoteCount || 0)));
+        filtered.sort((a, b) => (b.highlightCount + b.checkboxCount + (b.pageNoteCount || 0) + (b.clipboardCount || 0)) - (a.highlightCount + a.checkboxCount + (a.pageNoteCount || 0) + (a.clipboardCount || 0)));
         break;
       case 'alpha':
         filtered.sort((a, b) => a.title.localeCompare(b.title));
@@ -594,7 +841,7 @@
 
     // Update stats
     totalPagesEl.textContent = allPages.length;
-    const totalAnnotations = allPages.reduce((sum, p) => sum + p.highlightCount + p.checkboxCount + (p.pageNoteCount || 0), 0);
+    const totalAnnotations = allPages.reduce((sum, p) => sum + p.highlightCount + p.checkboxCount + (p.pageNoteCount || 0) + (p.clipboardCount || 0), 0);
     totalAnnotationsEl.textContent = totalAnnotations;
 
     // Clear existing cards (keep empty state)
@@ -615,6 +862,289 @@
         pageListEl.appendChild(createPageCard(page));
       });
     }
+  }
+
+  /**
+   * Perform annotation search
+   */
+  async function performSearch() {
+    const filtersBar = document.getElementById('filters-bar');
+    const options = buildFilterOptions();
+
+    try {
+      searchResults = await sendMessage('SEARCH_ANNOTATIONS', {
+        query: searchQuery,
+        options
+      });
+      renderSearchResults();
+    } catch (error) {
+      console.error('Search failed:', error);
+    }
+  }
+
+  /**
+   * Build filter options object from activeFilters
+   */
+  function buildFilterOptions() {
+    const options = {};
+
+    if (activeFilters.types.length > 0) {
+      options.types = activeFilters.types;
+    }
+
+    if (activeFilters.colorIds.length > 0) {
+      options.colorIds = activeFilters.colorIds;
+    }
+
+    if (activeFilters.dateRange) {
+      options.dateRange = activeFilters.dateRange;
+    }
+
+    return options;
+  }
+
+  /**
+   * Highlight matching text in search results
+   */
+  function highlightMatch(text, query) {
+    if (!query || !text) return escapeHtml(text || '');
+
+    const escapedText = escapeHtml(text);
+    const escapedQuery = escapeHtml(query);
+    const regex = new RegExp(`(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return escapedText.replace(regex, '<mark>$1</mark>');
+  }
+
+  /**
+   * Render search results (annotation cards)
+   */
+  function renderSearchResults() {
+    const filtersBar = document.getElementById('filters-bar');
+    const searchResultsEl = document.getElementById('search-results');
+    const pageListEl = document.getElementById('page-list');
+
+    // Show/hide appropriate elements
+    if (searchMode === 'annotations') {
+      pageListEl.style.display = 'none';
+      searchResultsEl.style.display = 'block';
+      filtersBar.style.display = 'flex';
+    } else {
+      pageListEl.style.display = '';
+      searchResultsEl.style.display = 'none';
+      filtersBar.style.display = 'none';
+      return;
+    }
+
+    // Update result count
+    const resultCount = document.getElementById('search-result-count');
+    resultCount.textContent = `${searchResults.length} annotation${searchResults.length !== 1 ? 's' : ''} found`;
+
+    // Clear existing results
+    const resultsContainer = searchResultsEl.querySelector('.search-results-list');
+    resultsContainer.innerHTML = '';
+
+    if (searchResults.length === 0) {
+      resultsContainer.innerHTML = `
+        <div class="search-empty-state">
+          <p>No annotations match your search${searchQuery ? ` for "${escapeHtml(searchQuery)}"` : ''}.</p>
+          ${hasActiveFilters() ? '<p>Try removing some filters.</p>' : ''}
+        </div>
+      `;
+      return;
+    }
+
+    // Render each annotation result
+    for (const annotation of searchResults) {
+      const card = createAnnotationCard(annotation);
+      resultsContainer.appendChild(card);
+    }
+  }
+
+  /**
+   * Check if any filters are active
+   */
+  function hasActiveFilters() {
+    return activeFilters.types.length > 0 ||
+           activeFilters.colorIds.length > 0 ||
+           activeFilters.dateRange !== null;
+  }
+
+  /**
+   * Create annotation card for search results
+   */
+  function createAnnotationCard(annotation) {
+    const card = document.createElement('div');
+    card.className = `annotation-card ${annotation.annotationType}`;
+    card.dataset.id = annotation.id;
+
+    const isPageNote = annotation.annotationType === 'page-note';
+    const isCheckbox = annotation.annotationType === 'checkbox';
+    const isClipboard = annotation.annotationType === 'clipboard';
+    const text = isPageNote ? 'Page Note' : (annotation.textSnapshot || '(no text)');
+    const colorName = getAnnotationColorName(annotation);
+    const colorLabel = !isClipboard && colorName !== 'Default' ? ` (${colorName})` : '';
+
+    // Determine type label
+    let typeLabel = 'Highlight';
+    if (isPageNote) typeLabel = 'Page Note';
+    else if (isCheckbox) typeLabel = 'Checkbox';
+    else if (isClipboard) typeLabel = 'Clipboard';
+
+    // Determine text to display - highlight if searching
+    const displayText = searchQuery
+      ? highlightMatch(truncate(text, 150), searchQuery)
+      : escapeHtml(truncate(text, 150));
+
+    const noteText = annotation.note && annotation.note.trim()
+      ? (searchQuery ? highlightMatch(truncate(annotation.note, 100), searchQuery) : escapeHtml(truncate(annotation.note, 100)))
+      : '';
+
+    card.innerHTML = `
+      <div class="annotation-card-header">
+        <span class="annotation-card-type ${annotation.annotationType}">
+          ${typeLabel}${colorLabel}
+        </span>
+        <span class="annotation-card-time">${formatRelativeTime(annotation.updatedAt)}</span>
+      </div>
+      <div class="annotation-card-content">
+        ${isCheckbox ? `<input type="checkbox" class="annotation-card-checkbox" ${annotation.checked ? 'checked' : ''}>` : ''}
+        <div class="annotation-card-text">
+          <p class="annotation-card-main-text">${displayText}</p>
+          ${noteText ? `<p class="annotation-card-note">Note: ${noteText}</p>` : ''}
+        </div>
+      </div>
+      <div class="annotation-card-footer">
+        <a href="${escapeHtml(annotation.pageUrl)}" class="annotation-card-source" title="${escapeHtml(annotation.pageTitle || annotation.pageUrl)}">
+          ${escapeHtml(truncate(annotation.pageTitle || getDomain(annotation.pageUrl), 40))}
+        </a>
+        ${isClipboard ? `<button class="annotation-card-copy" title="Copy">Copy</button>` : ''}
+        <button class="annotation-card-delete" title="Delete">&times;</button>
+      </div>
+    `;
+
+    // Checkbox handler
+    const checkbox = card.querySelector('.annotation-card-checkbox');
+    if (checkbox) {
+      checkbox.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        await sendMessage('UPDATE_ANNOTATION', {
+          id: annotation.id,
+          patch: { checked: checkbox.checked }
+        });
+        annotation.checked = checkbox.checked;
+      });
+    }
+
+    // Copy handler for clipboard items
+    const copyBtn = card.querySelector('.annotation-card-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(annotation.textSnapshot);
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+        } catch (err) {
+          console.error('Failed to copy:', err);
+        }
+      });
+    }
+
+    // Delete handler
+    card.querySelector('.annotation-card-delete').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm(isClipboard ? 'Delete this clipboard item?' : 'Delete this annotation?')) return;
+
+      if (isClipboard) {
+        // Delete from clipboard storage
+        try {
+          const { clipboardHistory = [] } = await browser.storage.local.get('clipboardHistory');
+          const newHistory = clipboardHistory.filter(h =>
+            !(h.text === annotation.textSnapshot && h.timestamp === annotation.createdAt)
+          );
+          await browser.storage.local.set({ clipboardHistory: newHistory });
+        } catch (err) {
+          console.error('Failed to delete clipboard item:', err);
+        }
+      } else {
+        await sendMessage('DELETE_ANNOTATION', { id: annotation.id });
+      }
+      performSearch(); // Refresh results
+    });
+
+    // Click card to view detail (skip for clipboard items)
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.annotation-card-checkbox') ||
+          e.target.closest('.annotation-card-delete') ||
+          e.target.closest('.annotation-card-copy') ||
+          e.target.closest('.annotation-card-source')) return;
+      if (!isClipboard) {
+        showAnnotationDetail(annotation);
+      }
+    });
+
+    // Source link handler
+    card.querySelector('.annotation-card-source').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      browser.tabs.create({ url: annotation.pageUrl });
+    });
+
+    return card;
+  }
+
+  /**
+   * Toggle filter chip
+   */
+  function toggleFilter(category, value) {
+    if (category === 'dateRange') {
+      // Date is single-select
+      activeFilters.dateRange = activeFilters.dateRange === value ? null : value;
+    } else {
+      // Types and intents are multi-select
+      const index = activeFilters[category].indexOf(value);
+      if (index === -1) {
+        activeFilters[category].push(value);
+      } else {
+        activeFilters[category].splice(index, 1);
+      }
+    }
+
+    updateFilterChipStates();
+    performSearch();
+  }
+
+  /**
+   * Update filter chip active states
+   */
+  function updateFilterChipStates() {
+    // Type filters
+    document.querySelectorAll('.filter-chip[data-type]').forEach(chip => {
+      chip.classList.toggle('active', activeFilters.types.includes(chip.dataset.type));
+    });
+
+    // Color filters
+    document.querySelectorAll('.filter-chip[data-color-id]').forEach(chip => {
+      chip.classList.toggle('active', activeFilters.colorIds.includes(chip.dataset.colorId));
+    });
+
+    // Date filters
+    document.querySelectorAll('.filter-chip[data-date]').forEach(chip => {
+      chip.classList.toggle('active', activeFilters.dateRange === chip.dataset.date);
+    });
+
+    // Clear filters button visibility
+    const clearBtn = document.getElementById('clear-filters');
+    clearBtn.style.display = hasActiveFilters() ? '' : 'none';
+  }
+
+  /**
+   * Clear all filters
+   */
+  function clearFilters() {
+    activeFilters = { types: [], colorIds: [], dateRange: null };
+    updateFilterChipStates();
+    performSearch();
   }
 
   /**
@@ -699,6 +1229,142 @@
   }
 
   /**
+   * Export all annotations to Markdown file
+   */
+  async function exportAllToMarkdown() {
+    try {
+      const annotations = await sendMessage('GET_ALL_ANNOTATIONS');
+
+      if (annotations.length === 0) {
+        alert('No annotations to export.');
+        return;
+      }
+
+      // Group annotations by pageUrl
+      const pageMap = new Map();
+      for (const a of annotations) {
+        if (!pageMap.has(a.pageUrl)) {
+          pageMap.set(a.pageUrl, {
+            pageUrl: a.pageUrl,
+            pageTitle: a.pageTitle || getDomain(a.pageUrl),
+            annotations: []
+          });
+        }
+        pageMap.get(a.pageUrl).annotations.push(a);
+      }
+
+      const pages = Array.from(pageMap.values());
+
+      // Build markdown with Table of Contents
+      let md = `---
+exported: ${new Date().toISOString()}
+total_pages: ${pages.length}
+total_annotations: ${annotations.length}
+---
+
+# AnnotatePro Export
+
+Exported: ${new Date().toLocaleString()}
+
+## Table of Contents
+
+`;
+
+      // Generate TOC
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        const anchor = `page-${i + 1}`;
+        md += `${i + 1}. [${page.pageTitle}](#${anchor}) (${page.annotations.length} annotations)\n`;
+      }
+
+      md += `\n---\n\n`;
+
+      // Generate each page section
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        const anchor = `page-${i + 1}`;
+        const domain = getDomain(page.pageUrl);
+
+        md += `## <a id="${anchor}"></a>${page.pageTitle}\n\n`;
+        md += `Source: [${domain}](${page.pageUrl})\n\n`;
+
+        // Group annotations by type
+        const pageNotes = page.annotations.filter(a => a.annotationType === 'page-note');
+        const highlights = page.annotations.filter(a => a.annotationType === 'highlight');
+        const checkboxes = page.annotations.filter(a => a.annotationType === 'checkbox');
+
+        // Group highlights by color
+        const highlightsByColor = {};
+        for (const h of highlights) {
+          const colorName = getAnnotationColorName(h);
+          if (!highlightsByColor[colorName]) {
+            highlightsByColor[colorName] = [];
+          }
+          highlightsByColor[colorName].push(h);
+        }
+
+        // Page Notes
+        if (pageNotes.length > 0) {
+          md += `### Page Notes\n`;
+          for (const note of pageNotes) {
+            if (note.note && note.note.trim()) {
+              md += `- ${note.note.trim().replace(/\n/g, '\n  ')}\n`;
+            }
+          }
+          md += `\n`;
+        }
+
+        // Highlights
+        if (highlights.length > 0) {
+          md += `### Highlights\n\n`;
+          for (const [colorName, items] of Object.entries(highlightsByColor)) {
+            md += `#### ${colorName}\n`;
+            for (const h of items) {
+              const text = h.textSnapshot || '(no text)';
+              md += `- "${text}"\n`;
+              if (h.note && h.note.trim()) {
+                md += `  - Note: ${h.note.trim().replace(/\n/g, '\n    ')}\n`;
+              }
+            }
+            md += `\n`;
+          }
+        }
+
+        // Checkboxes
+        if (checkboxes.length > 0) {
+          md += `### Checkboxes\n`;
+          for (const cb of checkboxes) {
+            const checked = cb.checked ? 'x' : ' ';
+            const text = cb.textSnapshot || '(no text)';
+            md += `- [${checked}] ${text}\n`;
+            if (cb.note && cb.note.trim()) {
+              md += `  - Note: ${cb.note.trim().replace(/\n/g, '\n    ')}\n`;
+            }
+          }
+          md += `\n`;
+        }
+
+        md += `---\n\n`;
+      }
+
+      // Download the markdown file
+      const blob = new Blob([md], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `annotatepro-export-${new Date().toISOString().slice(0, 10)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export annotations to markdown:', error);
+      alert('Failed to export annotations. Please try again.');
+    }
+  }
+
+  /**
    * Import annotations from JSON file
    */
   async function importAnnotations(file) {
@@ -738,6 +1404,189 @@
   }
 
   /**
+   * Show color management modal
+   */
+  function showColorManagement() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay color-management-overlay';
+
+    const renderColorList = () => {
+      return cachedColors.map((color, index) => `
+        <div class="color-item" data-id="${color.id}" data-sort="${color.sortOrder}">
+          <div class="color-item-drag" title="Drag to reorder">⋮⋮</div>
+          <div class="color-item-swatch" style="background: ${hexToRgba(color.color, 0.5)}"></div>
+          <input type="text" class="color-item-name" value="${escapeHtml(color.name)}" placeholder="Color name">
+          <input type="color" class="color-item-picker" value="${color.color}">
+          <span class="color-item-usage">${color.usageCount || 0} uses</span>
+          ${color.isDefault ? '<span class="color-item-default">Default</span>' : `<button class="color-item-delete" title="Delete">&times;</button>`}
+        </div>
+      `).join('');
+    };
+
+    modal.innerHTML = `
+      <div class="modal color-management-modal">
+        <div class="modal-header">
+          <h2>Manage Colors</h2>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="color-management-help">Customize highlight colors. Default colors cannot be deleted but can be renamed.</p>
+          <div class="color-list" id="color-list">
+            ${renderColorList()}
+          </div>
+          <button class="add-color-btn" id="add-color-btn">+ Add Color</button>
+        </div>
+        <div class="modal-footer">
+          <span class="color-save-status"></span>
+          <button class="modal-done-btn">Done</button>
+        </div>
+      </div>
+    `;
+
+    const statusEl = modal.querySelector('.color-save-status');
+    const colorList = modal.querySelector('#color-list');
+
+    // Auto-save color name changes with debounce
+    let saveTimer = null;
+    colorList.addEventListener('input', async (e) => {
+      if (e.target.classList.contains('color-item-name')) {
+        clearTimeout(saveTimer);
+        const item = e.target.closest('.color-item');
+        const colorId = item.dataset.id;
+        const newName = e.target.value.trim();
+
+        if (!newName) return;
+
+        saveTimer = setTimeout(async () => {
+          try {
+            statusEl.textContent = 'Saving...';
+            await sendMessage('UPDATE_COLOR', { id: colorId, patch: { name: newName } });
+
+            // Update cache
+            const color = cachedColors.find(c => c.id === colorId);
+            if (color) color.name = newName;
+
+            statusEl.textContent = 'Saved';
+            setTimeout(() => { statusEl.textContent = ''; }, 1500);
+          } catch (err) {
+            statusEl.textContent = 'Error';
+            console.error('Failed to save color name:', err);
+          }
+        }, 500);
+      }
+    });
+
+    // Color picker changes
+    colorList.addEventListener('change', async (e) => {
+      if (e.target.classList.contains('color-item-picker')) {
+        const item = e.target.closest('.color-item');
+        const colorId = item.dataset.id;
+        const newColor = e.target.value;
+
+        try {
+          statusEl.textContent = 'Saving...';
+          await sendMessage('UPDATE_COLOR', { id: colorId, patch: { color: newColor } });
+
+          // Update cache and UI
+          const color = cachedColors.find(c => c.id === colorId);
+          if (color) color.color = newColor;
+          item.querySelector('.color-item-swatch').style.background = hexToRgba(newColor, 0.5);
+
+          statusEl.textContent = 'Saved';
+          setTimeout(() => { statusEl.textContent = ''; }, 1500);
+        } catch (err) {
+          statusEl.textContent = 'Error';
+          console.error('Failed to save color:', err);
+        }
+      }
+    });
+
+    // Delete color
+    colorList.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('color-item-delete')) {
+        const item = e.target.closest('.color-item');
+        const colorId = item.dataset.id;
+        const color = cachedColors.find(c => c.id === colorId);
+
+        if (!color || color.isDefault) return;
+
+        // Check usage count
+        if (color.usageCount > 0) {
+          const reassign = confirm(`This color is used by ${color.usageCount} annotation(s).\n\nDelete and reassign to Action color?`);
+          if (!reassign) return;
+
+          try {
+            statusEl.textContent = 'Deleting...';
+            await sendMessage('DELETE_COLOR', { id: colorId, reassignToColorId: 'default-action' });
+          } catch (err) {
+            statusEl.textContent = 'Error';
+            console.error('Failed to delete color:', err);
+            return;
+          }
+        } else {
+          if (!confirm(`Delete "${color.name}"?`)) return;
+
+          try {
+            statusEl.textContent = 'Deleting...';
+            await sendMessage('DELETE_COLOR', { id: colorId });
+          } catch (err) {
+            statusEl.textContent = 'Error';
+            console.error('Failed to delete color:', err);
+            return;
+          }
+        }
+
+        // Remove from cache and UI
+        cachedColors = cachedColors.filter(c => c.id !== colorId);
+        item.remove();
+        updateColorFilterChips();
+        statusEl.textContent = 'Deleted';
+        setTimeout(() => { statusEl.textContent = ''; }, 1500);
+      }
+    });
+
+    // Add new color
+    modal.querySelector('#add-color-btn').addEventListener('click', async () => {
+      const newColor = {
+        name: `Custom ${cachedColors.length + 1}`,
+        color: '#9C27B0', // Purple default
+        sortOrder: cachedColors.length
+      };
+
+      try {
+        statusEl.textContent = 'Adding...';
+        const savedColor = await sendMessage('ADD_COLOR', newColor);
+        cachedColors.push(savedColor);
+
+        // Re-render color list
+        colorList.innerHTML = renderColorList();
+        updateColorFilterChips();
+
+        statusEl.textContent = 'Added';
+        setTimeout(() => { statusEl.textContent = ''; }, 1500);
+      } catch (err) {
+        statusEl.textContent = 'Error';
+        console.error('Failed to add color:', err);
+      }
+    });
+
+    // Close modal
+    const closeModal = () => {
+      modal.remove();
+      // Refresh the page data to reflect any color changes
+      loadPages();
+    };
+
+    modal.querySelector('.modal-close').addEventListener('click', closeModal);
+    modal.querySelector('.modal-done-btn').addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    document.body.appendChild(modal);
+  }
+
+  /**
    * Clear all data from the database
    */
   async function clearDatabase() {
@@ -771,11 +1620,92 @@
    * Initialize
    */
   function init() {
-    // Search input
+    // Search input with debounce
+    const searchClearBtn = document.getElementById('search-clear');
+
+    // Update clear button visibility
+    function updateClearButtonVisibility() {
+      if (searchInputEl.value.length > 0) {
+        searchClearBtn.classList.add('visible');
+      } else {
+        searchClearBtn.classList.remove('visible');
+      }
+    }
+
     searchInputEl.addEventListener('input', (e) => {
       searchQuery = e.target.value.trim();
-      renderPages();
+      updateClearButtonVisibility();
+
+      if (searchMode === 'pages') {
+        renderPages();
+      } else {
+        // Debounce annotation search
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+          performSearch();
+        }, 300);
+      }
     });
+
+    // Clear button click
+    searchClearBtn.addEventListener('click', () => {
+      searchInputEl.value = '';
+      searchQuery = '';
+      updateClearButtonVisibility();
+      searchInputEl.focus();
+
+      if (searchMode === 'pages') {
+        renderPages();
+      } else {
+        performSearch();
+      }
+    });
+
+    // ESC key to clear search
+    searchInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        searchInputEl.value = '';
+        searchQuery = '';
+        updateClearButtonVisibility();
+
+        if (searchMode === 'pages') {
+          renderPages();
+        } else {
+          performSearch();
+        }
+      }
+    });
+
+    // Search mode toggle
+    document.getElementById('search-mode-toggle').addEventListener('click', () => {
+      searchMode = searchMode === 'pages' ? 'annotations' : 'pages';
+
+      const toggleBtn = document.getElementById('search-mode-toggle');
+      toggleBtn.textContent = searchMode === 'pages' ? 'Search Annotations' : 'Search Pages';
+      toggleBtn.classList.toggle('active', searchMode === 'annotations');
+
+      // Update placeholder
+      searchInputEl.placeholder = searchMode === 'pages' ? 'Search pages...' : 'Search annotations...';
+
+      if (searchMode === 'annotations') {
+        performSearch();
+      } else {
+        renderPages();
+        renderSearchResults(); // This will hide search results and show pages
+      }
+    });
+
+    // Filter chip handlers for types and dates (colors added dynamically in updateColorFilterChips)
+    document.querySelectorAll('.filter-chip[data-type]').forEach(chip => {
+      chip.addEventListener('click', () => toggleFilter('types', chip.dataset.type));
+    });
+
+    document.querySelectorAll('.filter-chip[data-date]').forEach(chip => {
+      chip.addEventListener('click', () => toggleFilter('dateRange', chip.dataset.date));
+    });
+
+    // Clear filters button
+    document.getElementById('clear-filters').addEventListener('click', clearFilters);
 
     // Sort select
     sortSelectEl.addEventListener('change', (e) => {
@@ -783,8 +1713,11 @@
       renderPages();
     });
 
-    // Export button
+    // Export button (JSON)
     document.getElementById('btn-export').addEventListener('click', exportAnnotations);
+
+    // Export Markdown button
+    document.getElementById('btn-export-md').addEventListener('click', exportAllToMarkdown);
 
     // Import button and file input
     const importFileEl = document.getElementById('import-file');
@@ -797,6 +1730,9 @@
         e.target.value = ''; // Reset for future imports
       }
     });
+
+    // Color management button
+    document.getElementById('btn-manage-colors').addEventListener('click', showColorManagement);
 
     // Clear database button
     document.getElementById('btn-clear-db').addEventListener('click', clearDatabase);
@@ -858,9 +1794,11 @@
       }
     });
 
-    // Load pages and storage info
-    loadPages();
-    updateStorageInfo();
+    // Load colors first, then pages and storage info
+    loadColors().then(() => {
+      loadPages();
+      updateStorageInfo();
+    });
   }
 
   init();

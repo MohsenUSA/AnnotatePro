@@ -9,9 +9,11 @@ const MessageType = {
   GET_PAGE_ANNOTATIONS: 'GET_PAGE_ANNOTATIONS',
   GET_ALL_ANNOTATIONS: 'GET_ALL_ANNOTATIONS',
   GET_ANNOTATION_COUNT: 'GET_ANNOTATION_COUNT',
-  CLEAR_PAGE_ANNOTATIONS: 'CLEAR_PAGE_ANNOTATIONS'
+  CLEAR_PAGE_ANNOTATIONS: 'CLEAR_PAGE_ANNOTATIONS',
+  GET_ALL_COLORS: 'GET_ALL_COLORS'
 };
 
+// Legacy intent colors for backwards compatibility
 const INTENT_COLORS = {
   ACTION: 'rgba(255, 235, 59, 0.5)',
   QUESTION: 'rgba(100, 181, 246, 0.5)',
@@ -21,17 +23,104 @@ const INTENT_COLORS = {
   DEFAULT: 'rgba(255, 235, 59, 0.5)'
 };
 
-const COLOR_PRESETS = [
-  { name: 'Yellow', value: 'rgba(255, 235, 59, 0.5)' },
-  { name: 'Blue', value: 'rgba(100, 181, 246, 0.5)' },
-  { name: 'Red', value: 'rgba(239, 83, 80, 0.5)' },
-  { name: 'Green', value: 'rgba(129, 199, 132, 0.5)' },
-  { name: 'Purple', value: 'rgba(206, 147, 216, 0.5)' }
-];
+// Legacy intent names for backwards compatibility
+const INTENT_NAMES = {
+  ACTION: 'Action (Yellow)',
+  QUESTION: 'Question (Blue)',
+  RISK: 'Risk (Red)',
+  REFERENCE: 'Reference (Green)',
+  CUSTOM: 'Custom (Purple)',
+  DEFAULT: 'Action (Yellow)'
+};
 
 let currentTab = null;
 let pageAnnotations = [];
 let activeNoteEditor = null;
+let cachedColors = [];
+
+/**
+ * Convert hex color to rgba
+ */
+function hexToRgba(hex, alpha = 0.5) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (result) {
+    const r = parseInt(result[1], 16);
+    const g = parseInt(result[2], 16);
+    const b = parseInt(result[3], 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return hex;
+}
+
+/**
+ * Get color by ID from cache
+ */
+function getColorById(colorId) {
+  return cachedColors.find(c => c.id === colorId);
+}
+
+/**
+ * Get display color for an annotation (prefers colorId, falls back to legacy)
+ */
+function getAnnotationColor(annotation) {
+  const { colorId, color, intent } = annotation;
+
+  // If explicit color is set (including transparent), use it
+  if (color) return color;
+
+  // If colorId is set, get color from cache
+  if (colorId) {
+    const colorObj = getColorById(colorId);
+    if (colorObj) {
+      return hexToRgba(colorObj.color, 0.5);
+    }
+  }
+
+  // Legacy fallback: use intent
+  if (intent && INTENT_COLORS[intent]) {
+    return INTENT_COLORS[intent];
+  }
+
+  return INTENT_COLORS.DEFAULT;
+}
+
+/**
+ * Get color name for an annotation
+ */
+function getAnnotationColorName(annotation) {
+  const { colorId, intent } = annotation;
+
+  // If colorId is set, get color name from cache
+  if (colorId) {
+    const colorObj = getColorById(colorId);
+    if (colorObj) {
+      return colorObj.name;
+    }
+  }
+
+  // Legacy fallback: use intent name
+  if (intent && INTENT_NAMES[intent]) {
+    return INTENT_NAMES[intent];
+  }
+
+  return 'Default';
+}
+
+/**
+ * Load colors from the database
+ */
+async function loadColors() {
+  try {
+    cachedColors = await browser.runtime.sendMessage({
+      type: MessageType.GET_ALL_COLORS,
+      payload: {}
+    });
+    cachedColors.sort((a, b) => a.sortOrder - b.sortOrder);
+  } catch (error) {
+    console.error('Failed to load colors:', error);
+    cachedColors = [];
+  }
+}
 
 /**
  * Get the current active tab
@@ -79,7 +168,7 @@ function renderAnnotationList() {
     item.dataset.id = annotation.id;
 
     const isPageNote = annotation.annotationType === 'page-note';
-    const color = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
+    const color = getAnnotationColor(annotation);
     const text = isPageNote ? 'Page Note' : (annotation.textSnapshot || '(no text)');
     const isCheckbox = annotation.annotationType === 'checkbox';
     const hasNote = annotation.note && annotation.note.trim().length > 0;
@@ -147,10 +236,23 @@ function toggleNoteEditor(item, annotation) {
   // Close any existing editor
   closeNoteEditor();
 
-  const currentColor = annotation.color || INTENT_COLORS[annotation.intent] || INTENT_COLORS.DEFAULT;
+  const currentColor = getAnnotationColor(annotation);
   const isCheckbox = annotation.annotationType === 'checkbox';
   const isPageNote = annotation.annotationType === 'page-note';
-  const hasNoColor = !annotation.color || annotation.color === 'transparent';
+  const hasNoColor = currentColor === 'transparent' || !annotation.colorId;
+
+  // Build color swatches from cached colors
+  const colorSwatches = cachedColors.map(c => {
+    const colorValue = hexToRgba(c.color, 0.5);
+    const isActive = c.id === annotation.colorId || colorValue === currentColor;
+    return `
+      <button class="color-swatch ${isActive ? 'active' : ''}"
+              data-color-id="${c.id}"
+              data-color="${colorValue}"
+              title="${c.name}"
+              style="background: ${colorValue}"></button>
+    `;
+  }).join('');
 
   // Create editor
   const editorEl = document.createElement('div');
@@ -158,12 +260,7 @@ function toggleNoteEditor(item, annotation) {
   editorEl.innerHTML = `
     ${!isPageNote ? `
     <div class="color-picker">
-      ${COLOR_PRESETS.map(c => `
-        <button class="color-swatch ${c.value === currentColor ? 'active' : ''}"
-                data-color="${c.value}"
-                title="${c.name}"
-                style="background: ${c.value}"></button>
-      `).join('')}
+      ${colorSwatches}
       ${isCheckbox ? `<button class="color-swatch color-clear ${hasNoColor ? 'active' : ''}" data-color="transparent" title="No color">&times;</button>` : ''}
     </div>
     ` : ''}
@@ -190,30 +287,39 @@ function toggleNoteEditor(item, annotation) {
   editorEl.querySelectorAll('.color-swatch').forEach(swatch => {
     swatch.addEventListener('click', async (e) => {
       e.stopPropagation();
+      const newColorId = swatch.dataset.colorId;
       const newColor = swatch.dataset.color;
 
       // Update active state
       editorEl.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
       swatch.classList.add('active');
 
+      // Build patch - use colorId if available, otherwise color (for transparent)
+      const patch = newColorId ? { colorId: newColorId, color: null } : { colorId: null, color: newColor };
+
       // Save color
       try {
         statusEl.textContent = 'Saving...';
         await browser.runtime.sendMessage({
           type: MessageType.UPDATE_ANNOTATION,
-          payload: { id: annotation.id, patch: { color: newColor } }
+          payload: { id: annotation.id, patch }
         });
-        annotation.color = newColor;
+        annotation.colorId = newColorId || null;
+        annotation.color = newColorId ? null : newColor;
 
         // Update color indicator in list
-        item.querySelector('.annotation-color').style.background = newColor;
+        const displayColor = newColorId ? hexToRgba(getColorById(newColorId)?.color || '#FFEB3B', 0.5) : newColor;
+        const colorIndicator = item.querySelector('.annotation-color');
+        if (colorIndicator) {
+          colorIndicator.style.background = displayColor;
+        }
 
         // Tell content script to update
         try {
           await browser.tabs.sendMessage(currentTab.id, {
             type: 'COMMAND_UPDATE_COLOR',
             annotationId: annotation.id,
-            color: newColor
+            color: displayColor
           });
         } catch (e) {}
 
@@ -417,11 +523,15 @@ async function updateStats() {
 
     const highlights = pageAnnotations.filter(a => a.annotationType === 'highlight').length;
     const checkboxes = pageAnnotations.filter(a => a.annotationType === 'checkbox').length;
-    const pageNotes = pageAnnotations.filter(a => a.annotationType === 'page-note').length;
+    const pageNotes = pageAnnotations.filter(a => a.annotationType === 'page-note');
 
     document.getElementById('page-highlights').textContent = highlights;
     document.getElementById('page-checkboxes').textContent = checkboxes;
-    document.getElementById('page-notes').textContent = pageNotes;
+    document.getElementById('page-notes').textContent = pageNotes.length;
+
+    // Update page note indicator
+    const hasPageNote = pageNotes.some(a => a.note && a.note.trim());
+    document.getElementById('page-note-indicator').classList.toggle('visible', hasPageNote);
   } catch (error) {
     console.error('Failed to update stats:', error);
   }
@@ -532,6 +642,210 @@ async function updateStorageInfo() {
 }
 
 /**
+ * Export annotations on current page to Markdown file
+ */
+function exportToMarkdown() {
+  if (pageAnnotations.length === 0) {
+    alert('No annotations to export on this page.');
+    return;
+  }
+
+  const pageUrl = getPageUrl(currentTab);
+  const pageTitle = currentTab.title || 'Untitled Page';
+  const domain = new URL(pageUrl).hostname;
+
+  // Group annotations by type
+  const pageNotes = pageAnnotations.filter(a => a.annotationType === 'page-note');
+  const highlights = pageAnnotations.filter(a => a.annotationType === 'highlight');
+  const checkboxes = pageAnnotations.filter(a => a.annotationType === 'checkbox');
+
+  // Group highlights by color
+  const highlightsByColor = {};
+  for (const h of highlights) {
+    const colorName = getAnnotationColorName(h);
+    if (!highlightsByColor[colorName]) {
+      highlightsByColor[colorName] = [];
+    }
+    highlightsByColor[colorName].push(h);
+  }
+
+  // Build YAML frontmatter
+  let md = `---
+url: ${pageUrl}
+title: ${pageTitle.replace(/:/g, ' -')}
+exported: ${new Date().toISOString()}
+annotations: ${pageAnnotations.length}
+---
+
+# ${pageTitle}
+
+Source: [${domain}](${pageUrl})
+
+`;
+
+  // Page Notes section
+  if (pageNotes.length > 0) {
+    md += `## Page Notes\n`;
+    for (const note of pageNotes) {
+      if (note.note && note.note.trim()) {
+        md += `- ${note.note.trim().replace(/\n/g, '\n  ')}\n`;
+      }
+    }
+    md += `\n`;
+  }
+
+  // Highlights section
+  if (highlights.length > 0) {
+    md += `## Highlights\n\n`;
+    for (const [colorName, items] of Object.entries(highlightsByColor)) {
+      md += `### ${colorName}\n`;
+      for (const h of items) {
+        const text = h.textSnapshot || '(no text)';
+        md += `- "${text}"\n`;
+        if (h.note && h.note.trim()) {
+          md += `  - Note: ${h.note.trim().replace(/\n/g, '\n    ')}\n`;
+        }
+      }
+      md += `\n`;
+    }
+  }
+
+  // Checkboxes section
+  if (checkboxes.length > 0) {
+    md += `## Checkboxes\n`;
+    for (const cb of checkboxes) {
+      const checked = cb.checked ? 'x' : ' ';
+      const text = cb.textSnapshot || '(no text)';
+      md += `- [${checked}] ${text}\n`;
+      if (cb.note && cb.note.trim()) {
+        md += `  - Note: ${cb.note.trim().replace(/\n/g, '\n    ')}\n`;
+      }
+    }
+    md += `\n`;
+  }
+
+  // Download the markdown file
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const filename = `${pageTitle.slice(0, 50).replace(/[^a-zA-Z0-9]/g, '-')}-annotations.md`;
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Load clipboard history from content script
+ */
+async function loadClipboardHistory() {
+  const clipboardListEl = document.getElementById('clipboard-list');
+  const clipboardCountEl = document.getElementById('clipboard-count');
+  const clipboardEmptyEl = document.getElementById('clipboard-empty');
+
+  try {
+    // Get clipboard history from content script
+    const clipboardHistory = await browser.tabs.sendMessage(currentTab.id, {
+      type: 'GET_CLIPBOARD_HISTORY'
+    });
+
+    if (!clipboardHistory || clipboardHistory.length === 0) {
+      clipboardCountEl.textContent = '0';
+      clipboardEmptyEl.style.display = '';
+      return;
+    }
+
+    clipboardCountEl.textContent = clipboardHistory.length;
+    clipboardEmptyEl.style.display = 'none';
+
+    // Render clipboard items (show most recent 5)
+    const itemsToShow = clipboardHistory.slice(0, 5);
+    const itemsHtml = itemsToShow.map((entry, index) => {
+      const truncatedText = entry.text.length > 80 ? entry.text.slice(0, 80) + '...' : entry.text;
+      const timeAgo = formatRelativeTime(entry.timestamp);
+
+      return `
+        <div class="clipboard-item" data-index="${index}">
+          <div class="clipboard-text">${escapeHtml(truncatedText)}</div>
+          <div class="clipboard-meta">
+            <span>${timeAgo}</span>
+            <div class="clipboard-actions">
+              <button class="clipboard-btn copy-btn" data-action="copy">Copy</button>
+              <button class="clipboard-btn delete-btn" data-action="delete">&times;</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    clipboardListEl.innerHTML = itemsHtml;
+
+    // Add click handlers for clipboard buttons
+    clipboardListEl.querySelectorAll('.clipboard-btn').forEach(btnEl => {
+      btnEl.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const action = btnEl.dataset.action;
+        const index = parseInt(btnEl.closest('.clipboard-item').dataset.index);
+        const entry = itemsToShow[index];
+
+        if (action === 'copy' && entry) {
+          await navigator.clipboard.writeText(entry.text);
+          btnEl.textContent = 'Copied!';
+          setTimeout(() => { btnEl.textContent = 'Copy'; }, 1500);
+        } else if (action === 'delete') {
+          if (!confirm('Delete this clipboard item?')) return;
+          // Find and remove the entry from storage
+          try {
+            const { clipboardHistory: storedHistory = [] } = await browser.storage.local.get('clipboardHistory');
+            const newHistory = storedHistory.filter(h =>
+              !(h.text === entry.text && h.timestamp === entry.timestamp)
+            );
+            await browser.storage.local.set({ clipboardHistory: newHistory });
+            // Reload the list
+            loadClipboardHistory();
+          } catch (err) {
+            console.error('Failed to delete clipboard item:', err);
+          }
+        }
+      });
+    });
+
+  } catch (error) {
+    console.error('Failed to load clipboard history:', error);
+    clipboardCountEl.textContent = '0';
+  }
+}
+
+/**
+ * Format relative time
+ */
+function formatRelativeTime(timestamp) {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+/**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
  * Initialize popup
  */
 function init() {
@@ -561,11 +875,40 @@ function init() {
     window.close();
   });
 
-  // Intent buttons
+  // Export to Markdown button
+  document.getElementById('btn-export-md').addEventListener('click', () => {
+    exportToMarkdown();
+  });
+
+  // Screenshot buttons
+  document.getElementById('btn-capture-area').addEventListener('click', async () => {
+    await sendCommand('COMMAND_CAPTURE_AREA', {}, 1000);
+    window.close();
+  });
+
+  document.getElementById('btn-capture-visible').addEventListener('click', async () => {
+    await sendCommand('COMMAND_CAPTURE_VISIBLE', {}, 1000);
+    window.close();
+  });
+
+  document.getElementById('btn-capture-fullpage').addEventListener('click', async () => {
+    await sendCommand('COMMAND_CAPTURE_FULL_PAGE', {}, 1000);
+    window.close();
+  });
+
+  // Color/Intent buttons - map legacy intent to colorId
   document.querySelectorAll('.intent-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const intent = btn.dataset.intent;
-      await sendCommand('COMMAND_HIGHLIGHT', { intent }, 1000);
+      // Map legacy intent to colorId
+      const intentToColorId = {
+        'ACTION': 'default-action',
+        'QUESTION': 'default-question',
+        'RISK': 'default-risk',
+        'REFERENCE': 'default-reference'
+      };
+      const colorId = intentToColorId[intent] || 'default-action';
+      await sendCommand('COMMAND_HIGHLIGHT', { colorId }, 1000);
       window.close();
     });
   });
@@ -576,8 +919,67 @@ function init() {
     window.close();
   });
 
+  // Page note button
+  document.getElementById('btn-page-note').addEventListener('click', async () => {
+    if (currentTab) {
+      await browser.tabs.sendMessage(currentTab.id, { type: 'COMMAND_PAGE_NOTE' });
+      window.close();
+    }
+  });
+
+  // Sidebar toggle button
+  document.getElementById('btn-sidebar-toggle').addEventListener('click', async () => {
+    const response = await sendCommand('COMMAND_TOGGLE_SIDEBAR', {}, 1000);
+    if (response) {
+      updateSidebarUI(response);
+    }
+  });
+
+  // Sidebar position button
+  document.getElementById('btn-sidebar-position').addEventListener('click', async () => {
+    const response = await sendCommand('COMMAND_SWITCH_SIDEBAR_POSITION', {}, 1000);
+    if (response) {
+      updateSidebarUI(response);
+    }
+  });
+
   // Load data asynchronously (non-blocking)
   loadPopupData();
+}
+
+/**
+ * Load sidebar state from content script and update UI
+ */
+async function loadSidebarState() {
+  try {
+    // Try to get state directly from the sidebar on the page
+    const response = await sendCommand('GET_SIDEBAR_STATE', {}, 500);
+    if (response) {
+      updateSidebarUI(response);
+    } else {
+      // Fallback to storage if content script not available
+      const result = await browser.storage.local.get('sidebarSettings');
+      const settings = result.sidebarSettings || { collapsed: true, position: 'right' };
+      updateSidebarUI(settings);
+    }
+  } catch (error) {
+    console.error('Failed to load sidebar state:', error);
+  }
+}
+
+/**
+ * Update sidebar UI buttons based on state
+ */
+function updateSidebarUI(state) {
+  const statusEl = document.getElementById('sidebar-status');
+  const positionEl = document.getElementById('sidebar-position-target');
+
+  if (statusEl) {
+    statusEl.textContent = state.collapsed ? 'Show' : 'Hide';
+  }
+  if (positionEl) {
+    positionEl.textContent = state.position === 'right' ? 'Left' : 'Right';
+  }
 }
 
 /**
@@ -601,6 +1003,9 @@ async function loadPopupData() {
     // Wake up background script first (ensures DB is ready)
     await wakeBackground();
 
+    // Load colors first so they're available for rendering
+    await loadColors();
+
     currentTab = await getCurrentTab();
 
     // Check if we can access this tab
@@ -613,18 +1018,23 @@ async function loadPopupData() {
       // Run these in parallel for faster loading
       await Promise.all([
         loadAnnotations(),
-        checkSelection()
+        checkSelection(),
+        loadClipboardHistory()
       ]);
     } else {
       // Show message for inaccessible pages
       document.getElementById('section-quick-actions').style.display = 'none';
       document.getElementById('section-intents').style.display = 'none';
+      document.getElementById('section-clipboard').style.display = 'none';
       document.getElementById('section-no-selection').innerHTML = '<p class="no-selection-msg">Annotations not available on this page</p>';
       document.getElementById('section-no-selection').style.display = '';
     }
 
     // Update storage info (non-critical, do last)
     updateStorageInfo();
+
+    // Load sidebar state
+    loadSidebarState();
   } catch (error) {
     console.error('Failed to load popup data:', error);
   }

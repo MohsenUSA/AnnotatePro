@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AnnotatePro",
-  "version": "1.3",
+  "version": "1.4",
   "description": "Persistent web annotations - add checkboxes and highlights to any webpage",
   "browser_specific_settings": {
     "gecko": {
@@ -22,8 +22,8 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
-      "css": ["styles/annotations.css"],
+      "js": ["content/content.js", "sidebar/sidebar.js", "screenshot/screenshot-editor.js", "pdf/pdf-overlay.js"],
+      "css": ["styles/annotations.css", "sidebar/sidebar.css", "screenshot/screenshot-editor.css", "pdf/pdf-overlay.css"],
       "run_at": "document_idle"
     }
   ],
@@ -54,6 +54,18 @@
         "default": "Alt+C"
       },
       "description": "Add checkbox to element"
+    },
+    "toggle-sidebar": {
+      "suggested_key": {
+        "default": "Alt+S"
+      },
+      "description": "Toggle annotation sidebar"
+    },
+    "capture-screenshot": {
+      "suggested_key": {
+        "default": "Alt+X"
+      },
+      "description": "Capture screenshot"
     }
   },
   "web_accessible_resources": [
