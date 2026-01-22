@@ -2305,6 +2305,11 @@
       case 'ANNOTATION_ADDED':
         // Another source (popup, dashboard, other tab) added an annotation to this page
         if (message.annotation) {
+          // Guard: only process annotations for this page
+          const addedPageUrl = message.annotation.pageUrl;
+          if (addedPageUrl && addedPageUrl !== getPageUrl()) {
+            break;
+          }
           // Handle page notes separately
           if (message.annotation.annotationType === 'page-note') {
             pageNoteData = message.annotation;
@@ -2322,6 +2327,10 @@
 
       case 'ANNOTATION_UPDATED':
         if (message.annotationId && message.patch) {
+          // Guard: only process updates for this page
+          if (message.pageUrl && message.pageUrl !== getPageUrl()) {
+            break;
+          }
           // Check if this is a page note update
           if (pageNoteData && pageNoteData.id === message.annotationId) {
             Object.assign(pageNoteData, message.patch);
@@ -2372,6 +2381,10 @@
 
       case 'ANNOTATION_DELETED':
         if (message.annotationId) {
+          // Guard: only process deletions for this page
+          if (message.pageUrl && message.pageUrl !== getPageUrl()) {
+            break;
+          }
           // Check if deleted annotation is the page note
           if (pageNoteData && pageNoteData.id === message.annotationId) {
             pageNoteData = null;
@@ -2385,6 +2398,10 @@
         break;
 
       case 'PAGE_CLEARED':
+        // Guard: only clear annotations for this page
+        if (message.pageUrl && message.pageUrl !== getPageUrl()) {
+          break;
+        }
         clearAllAnnotationsFromDOM();
         // Also clear page note
         pageNoteData = null;

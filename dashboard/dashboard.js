@@ -9,7 +9,7 @@
   let allPages = [];
   let currentSort = 'recent';
   let searchQuery = '';
-  let searchMode = 'pages'; // 'pages' or 'annotations'
+  let activeView = 'all'; // 'all', 'pages', or 'annotations'
   let searchResults = [];
   let activeFilters = { types: [], colorIds: [], dateRange: null };
   let searchDebounceTimer = null;
@@ -916,28 +916,73 @@
   }
 
   /**
-   * Render search results (annotation cards)
+   * Switch between views (all, pages, annotations)
    */
-  function renderSearchResults() {
+  function switchView(view) {
+    activeView = view;
+
+    // Update tab UI
+    document.querySelectorAll('.view-tab').forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.view === view);
+    });
+
+    // Update placeholder
+    const searchInputEl = document.getElementById('search-input');
+    if (view === 'all') {
+      searchInputEl.placeholder = 'Search everything...';
+    } else if (view === 'pages') {
+      searchInputEl.placeholder = 'Search pages...';
+    } else {
+      searchInputEl.placeholder = 'Search annotations...';
+    }
+
+    // Render appropriate view
+    updateView();
+  }
+
+  /**
+   * Update the current view based on activeView and searchQuery
+   */
+  function updateView() {
     const filtersBar = document.getElementById('filters-bar');
     const searchResultsEl = document.getElementById('search-results');
     const pageListEl = document.getElementById('page-list');
 
-    // Show/hide appropriate elements
-    if (searchMode === 'annotations') {
-      pageListEl.style.display = 'none';
-      searchResultsEl.style.display = 'block';
-      filtersBar.style.display = 'flex';
-    } else {
+    if (activeView === 'pages') {
+      // Pages only view
       pageListEl.style.display = '';
       searchResultsEl.style.display = 'none';
       filtersBar.style.display = 'none';
-      return;
+      renderPages();
+    } else if (activeView === 'annotations') {
+      // Annotations only view
+      pageListEl.style.display = 'none';
+      searchResultsEl.style.display = 'block';
+      filtersBar.style.display = 'flex';
+      performSearch();
+    } else {
+      // 'all' view - show both pages and annotations
+      pageListEl.style.display = '';
+      searchResultsEl.style.display = 'block';
+      filtersBar.style.display = 'flex';
+      renderPages();
+      performSearch();
     }
+  }
 
-    // Update result count
+  /**
+   * Render search results (annotation cards)
+   */
+  function renderSearchResults() {
+    const searchResultsEl = document.getElementById('search-results');
+
+    // Update result count with context
     const resultCount = document.getElementById('search-result-count');
-    resultCount.textContent = `${searchResults.length} annotation${searchResults.length !== 1 ? 's' : ''} found`;
+    if (activeView === 'all') {
+      resultCount.textContent = `${searchResults.length} annotation${searchResults.length !== 1 ? 's' : ''}`;
+    } else {
+      resultCount.textContent = `${searchResults.length} annotation${searchResults.length !== 1 ? 's' : ''} found`;
+    }
 
     // Clear existing results
     const resultsContainer = searchResultsEl.querySelector('.search-results-list');
@@ -1636,15 +1681,17 @@ Exported: ${new Date().toLocaleString()}
       searchQuery = e.target.value.trim();
       updateClearButtonVisibility();
 
-      if (searchMode === 'pages') {
-        renderPages();
-      } else {
-        // Debounce annotation search
-        clearTimeout(searchDebounceTimer);
-        searchDebounceTimer = setTimeout(() => {
-          performSearch();
-        }, 300);
+      // Switch to 'all' view when searching (if not already on annotations view)
+      if (searchQuery && activeView === 'pages') {
+        switchView('all');
+        return;
       }
+
+      // Debounce search
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        updateView();
+      }, 300);
     });
 
     // Clear button click
@@ -1653,12 +1700,7 @@ Exported: ${new Date().toLocaleString()}
       searchQuery = '';
       updateClearButtonVisibility();
       searchInputEl.focus();
-
-      if (searchMode === 'pages') {
-        renderPages();
-      } else {
-        performSearch();
-      }
+      updateView();
     });
 
     // ESC key to clear search
@@ -1667,32 +1709,16 @@ Exported: ${new Date().toLocaleString()}
         searchInputEl.value = '';
         searchQuery = '';
         updateClearButtonVisibility();
-
-        if (searchMode === 'pages') {
-          renderPages();
-        } else {
-          performSearch();
-        }
+        updateView();
       }
     });
 
-    // Search mode toggle
-    document.getElementById('search-mode-toggle').addEventListener('click', () => {
-      searchMode = searchMode === 'pages' ? 'annotations' : 'pages';
-
-      const toggleBtn = document.getElementById('search-mode-toggle');
-      toggleBtn.textContent = searchMode === 'pages' ? 'Search Annotations' : 'Search Pages';
-      toggleBtn.classList.toggle('active', searchMode === 'annotations');
-
-      // Update placeholder
-      searchInputEl.placeholder = searchMode === 'pages' ? 'Search pages...' : 'Search annotations...';
-
-      if (searchMode === 'annotations') {
-        performSearch();
-      } else {
-        renderPages();
-        renderSearchResults(); // This will hide search results and show pages
-      }
+    // View tabs
+    document.querySelectorAll('.view-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const view = tab.dataset.view;
+        switchView(view);
+      });
     });
 
     // Filter chip handlers for types and dates (colors added dynamically in updateColorFilterChips)
@@ -1796,7 +1822,9 @@ Exported: ${new Date().toLocaleString()}
 
     // Load colors first, then pages and storage info
     loadColors().then(() => {
-      loadPages();
+      loadPages().then(() => {
+        updateView(); // Initialize the "All" view properly
+      });
       updateStorageInfo();
     });
   }

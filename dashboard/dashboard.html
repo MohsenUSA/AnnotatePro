@@ -30,36 +30,54 @@
     </header>
 
     <div class="toolbar">
-      <div class="search-box">
-        <div class="search-input-wrapper">
-          <input type="text" id="search-input" placeholder="Search pages..." />
-          <button class="search-clear-btn" id="search-clear" title="Clear search (Esc)">&times;</button>
-        </div>
-        <button class="search-mode-btn" id="search-mode-toggle" title="Toggle between searching pages and annotations">
-          Search Annotations
-        </button>
-      </div>
       <div class="toolbar-actions">
         <select id="sort-select">
           <option value="recent">Most Recent</option>
           <option value="most">Most Annotations</option>
           <option value="alpha">Alphabetical</option>
         </select>
-        <button class="toolbar-btn" id="btn-export" title="Export all annotations as JSON">
-          Export JSON
-        </button>
-        <button class="toolbar-btn" id="btn-export-md" title="Export all annotations as Markdown">
-          Export MD
-        </button>
-        <button class="toolbar-btn" id="btn-import" title="Import annotations from file">
-          Import
-        </button>
-        <input type="file" id="import-file" accept=".json" style="display: none;" />
-        <button class="toolbar-btn" id="btn-manage-colors" title="Manage colors">
-          Colors
-        </button>
+        <div class="toolbar-btn-group">
+          <button class="toolbar-btn" id="btn-export" title="Export all annotations as JSON">
+            Export JSON
+          </button>
+          <button class="toolbar-btn" id="btn-export-md" title="Export all annotations as Markdown">
+            Export MD
+          </button>
+          <button class="toolbar-btn" id="btn-import" title="Import annotations from file">
+            Import
+          </button>
+          <input type="file" id="import-file" accept=".json" style="display: none;" />
+          <button class="toolbar-btn" id="btn-manage-colors" title="Manage colors">
+            Colors
+          </button>
+        </div>
+        <div class="toolbar-separator"></div>
         <button class="toolbar-btn toolbar-btn-danger" id="btn-clear-db" title="Clear all data">
           Clear All
+        </button>
+      </div>
+    </div>
+
+    <div class="view-tabs-bar">
+      <div class="search-box">
+        <div class="search-input-wrapper">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="search-input" placeholder="Search everything..." />
+          <button class="search-clear-btn" id="search-clear" title="Clear search (Esc)">&times;</button>
+        </div>
+      </div>
+      <div class="view-tabs">
+        <button class="view-tab active" data-view="all">
+          <span class="view-tab-icon">📋</span>
+          <span class="view-tab-label">All</span>
+        </button>
+        <button class="view-tab" data-view="pages">
+          <span class="view-tab-icon">📄</span>
+          <span class="view-tab-label">Pages</span>
+        </button>
+        <button class="view-tab" data-view="annotations">
+          <span class="view-tab-icon">📝</span>
+          <span class="view-tab-label">Annotations</span>
         </button>
       </div>
     </div>
@@ -89,13 +107,6 @@
       <button class="clear-filters-btn" id="clear-filters" style="display: none;">Clear Filters</button>
     </div>
 
-    <div class="search-results" id="search-results" style="display: none;">
-      <div class="search-results-header">
-        <span id="search-result-count">0 annotations found</span>
-      </div>
-      <div class="search-results-list"></div>
-    </div>
-
     <main class="page-list" id="page-list">
       <div class="empty-state" id="empty-state">
         <div class="empty-icon">📝</div>
@@ -103,6 +114,13 @@
         <p>Start annotating pages and they'll appear here.</p>
       </div>
     </main>
+
+    <div class="search-results" id="search-results" style="display: none;">
+      <div class="search-results-header">
+        <span id="search-result-count">0 annotations found</span>
+      </div>
+      <div class="search-results-list"></div>
+    </div>
   </div>
 
   <script src="dashboard.js"></script>

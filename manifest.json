@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AnnotatePro",
-  "version": "1.4",
+  "version": "1.5",
   "description": "Persistent web annotations - add checkboxes and highlights to any webpage",
   "browser_specific_settings": {
     "gecko": {

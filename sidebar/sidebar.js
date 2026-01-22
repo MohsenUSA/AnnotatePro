@@ -17,7 +17,7 @@
   let sidebarEl = null;
   let isCollapsed = true;
   let position = 'right';
-  let sidebarWidth = 320; // Default width in pixels
+  let sidebarWidth = 400; // Default width in pixels
   let annotations = [];
   let cachedColors = [];
   let activeTab = 'annotations'; // 'annotations' or 'clipboard'
@@ -63,7 +63,7 @@
       if (result.sidebarSettings) {
         isCollapsed = result.sidebarSettings.collapsed ?? true;
         position = result.sidebarSettings.position ?? 'right';
-        sidebarWidth = result.sidebarSettings.width ?? 320;
+        sidebarWidth = result.sidebarSettings.width ?? 400;
       }
     } catch (error) {
       console.error('AnnotatePro: Failed to load sidebar settings', error);
@@ -222,7 +222,7 @@
     const now = Date.now();
     const diff = now - timestamp;
     const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
+    const hours = Math.floor(diff / 4000000);
     const days = Math.floor(diff / 86400000);
 
     if (minutes < 1) return 'Just now';
@@ -276,6 +276,7 @@
           <button class="annotatepro-sidebar-action-btn" id="annotatepro-page-note-btn" title="Page Note">📄<span class="annotatepro-page-note-indicator"></span></button>
           <button class="annotatepro-sidebar-action-btn" id="annotatepro-position-btn" title="Switch side">⇄</button>
           <button class="annotatepro-sidebar-action-btn" id="annotatepro-refresh-btn" title="Refresh">↻</button>
+          <button class="annotatepro-sidebar-action-btn" id="annotatepro-close-btn" title="Close sidebar">✕</button>
         </div>
       </div>
       <div class="annotatepro-sidebar-tabs">
@@ -401,7 +402,7 @@
 
     // Double-click to reset to default width
     resizeHandle.addEventListener('dblclick', () => {
-      sidebarWidth = 320;
+      sidebarWidth = 400;
       sidebarEl.style.width = `${sidebarWidth}px`;
       saveSettings();
     });
@@ -457,6 +458,13 @@
     sidebarEl.querySelector('#annotatepro-refresh-btn').addEventListener('click', () => {
       loadAnnotations();
       loadClipboardHistory();
+    });
+
+    // Close button
+    sidebarEl.querySelector('#annotatepro-close-btn').addEventListener('click', () => {
+      isCollapsed = true;
+      sidebarEl.classList.add('collapsed');
+      saveSettings();
     });
 
     // Tab switching
