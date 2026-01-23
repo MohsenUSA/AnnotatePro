@@ -352,7 +352,7 @@
    */
   async function loadPdfAnnotations() {
     try {
-      const pageUrl = window.location.href.split('#')[0];
+      const pageUrl = window.location.href;
       const annotations = await browser.runtime.sendMessage({
         type: 'GET_PAGE_ANNOTATIONS',
         payload: { pageUrl }
@@ -594,7 +594,7 @@
     // Create annotation
     const annotation = {
       annotationType: 'highlight',
-      pageUrl: window.location.href.split('#')[0],
+      pageUrl: window.location.href,
       pageTitle: document.title,
       textSnapshot: text,
       colorId: colorId || 'default-action',
@@ -642,7 +642,7 @@
 
     const annotation = {
       annotationType: 'checkbox',
-      pageUrl: window.location.href.split('#')[0],
+      pageUrl: window.location.href,
       pageTitle: document.title,
       checked: false,
       pdfMode: true,

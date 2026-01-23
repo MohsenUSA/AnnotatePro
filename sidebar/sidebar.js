@@ -55,13 +55,13 @@
   }
 
   /**
-   * Load sidebar settings from storage
+   * Load sidebar settings from storage (position and width only, collapsed state is per-tab)
    */
   async function loadSettings() {
     try {
       const result = await browser.storage.local.get('sidebarSettings');
       if (result.sidebarSettings) {
-        isCollapsed = result.sidebarSettings.collapsed ?? true;
+        // Don't load collapsed state - each tab starts collapsed independently
         position = result.sidebarSettings.position ?? 'right';
         sidebarWidth = result.sidebarSettings.width ?? 400;
       }
@@ -71,13 +71,12 @@
   }
 
   /**
-   * Save sidebar settings to storage
+   * Save sidebar settings to storage (position and width only)
    */
   async function saveSettings() {
     try {
       await browser.storage.local.set({
         sidebarSettings: {
-          collapsed: isCollapsed,
           position: position,
           width: sidebarWidth
         }
@@ -108,7 +107,7 @@
    */
   async function loadAnnotations() {
     try {
-      const pageUrl = window.location.href.split('#')[0];
+      const pageUrl = window.location.href;
       annotations = await browser.runtime.sendMessage({
         type: 'GET_PAGE_ANNOTATIONS',
         payload: { pageUrl }
@@ -313,6 +312,11 @@
     sidebarEl.classList.toggle('collapsed', isCollapsed);
     saveSettings();
 
+    // Notify content script of collapse state for badge visibility
+    window.dispatchEvent(new CustomEvent('annotatepro-sidebar-toggle', {
+      detail: { collapsed: isCollapsed }
+    }));
+
     // Load data when opening
     if (!isCollapsed) {
       loadAnnotations();
@@ -465,6 +469,11 @@
       isCollapsed = true;
       sidebarEl.classList.add('collapsed');
       saveSettings();
+
+      // Notify content script of collapse state for badge visibility
+      window.dispatchEvent(new CustomEvent('annotatepro-sidebar-toggle', {
+        detail: { collapsed: true }
+      }));
     });
 
     // Tab switching
@@ -1004,7 +1013,7 @@
    */
   function setupMessageListener() {
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      const currentPageUrl = window.location.href.split('#')[0];
+      const currentPageUrl = window.location.href;
 
       switch (message.type) {
         case 'COMMAND_TOGGLE_SIDEBAR':

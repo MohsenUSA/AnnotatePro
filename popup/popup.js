@@ -134,7 +134,7 @@ async function getCurrentTab() {
  * Get page URL from tab
  */
 function getPageUrl(tab) {
-  return tab.url.split('#')[0];
+  return tab.url;
 }
 
 /**

@@ -41,10 +41,8 @@ async function broadcastMessage(messageType, data = {}) {
       // Send to dashboard tabs
       browser.tabs.sendMessage(tab.id, { type: messageType, ...data }).catch(() => {});
     } else if (data.pageUrl && tab.url) {
-      // Send to content scripts on matching pages
-      const tabPageUrl = tab.url.split('#')[0];
-      const targetPageUrl = data.pageUrl.split('#')[0];
-      if (tabPageUrl === targetPageUrl) {
+      // Send to content scripts on matching pages (exact URL match including hash)
+      if (tab.url === data.pageUrl) {
         browser.tabs.sendMessage(tab.id, { type: messageType, ...data }).catch(() => {});
       }
     }

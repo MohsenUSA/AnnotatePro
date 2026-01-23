@@ -685,7 +685,7 @@
     overlay.querySelector('.delete').addEventListener('click', async () => {
       overlay.remove();
       // Send message to background to clear and reload
-      const pageUrl = window.location.href.split('#')[0];
+      const pageUrl = window.location.href;
       await browser.runtime.sendMessage({
         type: 'CLEAR_PAGE_ANNOTATIONS',
         payload: { pageUrl }
@@ -1253,12 +1253,41 @@
   let pageNoteBubble = null;
   let pageNoteTooltip = null;
   let pageNoteData = null; // Stores the page note annotation
+  let sidebarCollapsed = true; // Track if sidebar is collapsed (per-tab, always starts collapsed)
 
   /**
-   * Update page note bubble - disabled, page note access moved to sidebar/popup
+   * Update page note bubble - shows badge only when sidebar is collapsed and page has a note
    */
   function updatePageNoteBubble() {
-    // Page note bubble removed - access via sidebar or popup instead
+    // Remove existing bubble
+    if (pageNoteBubble) {
+      pageNoteBubble.remove();
+      pageNoteBubble = null;
+    }
+
+    // Only show if sidebar is collapsed and there's a page note with content
+    if (!sidebarCollapsed || !pageNoteData || !pageNoteData.note) {
+      return;
+    }
+
+    // Create bubble
+    pageNoteBubble = document.createElement('div');
+    pageNoteBubble.className = 'annotatepro-page-note-bubble';
+
+    // Click to open page note modal
+    pageNoteBubble.addEventListener('click', () => {
+      openPageNoteModal();
+    });
+
+    // Hover to show tooltip preview
+    pageNoteBubble.addEventListener('mouseenter', () => {
+      showPageNoteTooltip(pageNoteData.note);
+    });
+    pageNoteBubble.addEventListener('mouseleave', () => {
+      hidePageNoteTooltip();
+    });
+
+    document.body.appendChild(pageNoteBubble);
   }
 
   /**
@@ -1782,7 +1811,7 @@
   }
 
   function getPageUrl() {
-    return window.location.href.split('#')[0];
+    return window.location.href;
   }
 
   async function loadAnnotations() {
@@ -2424,6 +2453,13 @@
       case 'GET_CLIPBOARD_HISTORY':
         // Return clipboard history to popup
         return Promise.resolve(clipboardHistory);
+
+      case 'SIDEBAR_POSITION_CHANGED':
+        // Update badge position when sidebar position changes
+        if (message.position) {
+          updateBadgePosition(message.position);
+        }
+        break;
     }
   });
 
@@ -2496,6 +2532,18 @@
     });
   }
 
+  /**
+   * Listen for sidebar collapse/expand events
+   */
+  function setupSidebarEventListeners() {
+    window.addEventListener('annotatepro-sidebar-toggle', (event) => {
+      if (event.detail && typeof event.detail.collapsed === 'boolean') {
+        sidebarCollapsed = event.detail.collapsed;
+        updatePageNoteBubble();
+      }
+    });
+  }
+
   async function init() {
     if (document.readyState === 'loading') {
       await new Promise(resolve => {
@@ -2508,6 +2556,7 @@
 
     setupKeyboardShortcuts();
     setupMutationObserver();
+    setupSidebarEventListeners();
     await setupClipboardTracking();
     await loadAnnotations();
     await loadPageNote();

@@ -345,7 +345,7 @@
         try {
           const tabs = await browser.tabs.query({});
           for (const tab of tabs) {
-            if (tab.url && page.pageUrl && tab.url.startsWith(page.pageUrl.split('#')[0])) {
+            if (tab.url && page.pageUrl && tab.url === page.pageUrl) {
               browser.tabs.sendMessage(tab.id, {
                 type: 'COMMAND_UPDATE_CHECKBOX',
                 annotationId: id,
@@ -696,7 +696,7 @@
           try {
             const tabs = await browser.tabs.query({});
             for (const tab of tabs) {
-              if (tab.url && annotation.pageUrl && tab.url.startsWith(annotation.pageUrl.split('#')[0])) {
+              if (tab.url && annotation.pageUrl && tab.url === annotation.pageUrl) {
                 browser.tabs.sendMessage(tab.id, {
                   type: 'COMMAND_UPDATE_COLOR',
                   annotationId: annotation.id,
@@ -753,7 +753,7 @@
           try {
             const tabs = await browser.tabs.query({});
             for (const tab of tabs) {
-              if (tab.url && annotation.pageUrl && tab.url.startsWith(annotation.pageUrl.split('#')[0])) {
+              if (tab.url && annotation.pageUrl && tab.url === annotation.pageUrl) {
                 browser.tabs.sendMessage(tab.id, {
                   type: 'COMMAND_UPDATE_NOTE_BADGE',
                   annotationId: annotation.id,

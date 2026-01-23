@@ -247,7 +247,7 @@
   border-radius: 50%;
   cursor: pointer;
   z-index: 9999;
-  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.5), 0 0 0 3px rgba(255, 255, 255, 0.9);
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.5);
   transition: transform 0.2s, box-shadow 0.2s;
   display: flex;
   align-items: center;
@@ -266,7 +266,7 @@
 
 .annotatepro-page-note-bubble:hover {
   transform: translateY(-50%) scale(1.1);
-  box-shadow: 0 6px 24px rgba(139, 92, 246, 0.6), 0 0 0 3px rgba(255, 255, 255, 1);
+  box-shadow: 0 6px 24px rgba(139, 92, 246, 0.6);
 }
 
 .annotatepro-page-note-bubble:active {
@@ -332,11 +332,11 @@
 /* Dark mode adjustments */
 @media (prefers-color-scheme: dark) {
   .annotatepro-page-note-bubble {
-    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4), 0 0 0 3px rgba(30, 30, 30, 0.9);
+    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
   }
 
   .annotatepro-page-note-bubble:hover {
-    box-shadow: 0 6px 24px rgba(139, 92, 246, 0.5), 0 0 0 3px rgba(30, 30, 30, 1);
+    box-shadow: 0 6px 24px rgba(139, 92, 246, 0.5);
   }
 }
 
