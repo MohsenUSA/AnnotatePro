@@ -413,6 +413,12 @@
   border-left: 3px solid #6366f1;
 }
 
+.annotatepro-sidebar-item.highlight:hover,
+.annotatepro-sidebar-item.checkbox:hover,
+.annotatepro-sidebar-item.page-note:hover {
+  border-left-color: #6366f1;
+}
+
 .annotatepro-sidebar-item-header {
   display: flex;
   align-items: center;

@@ -478,6 +478,14 @@ async function createContextMenus() {
     contexts: ['all']
   });
 
+  // Generate QR Code
+  browser.contextMenus.create({
+    id: 'annotatepro-generate-qr',
+    parentId: 'annotatepro-parent',
+    title: 'Generate QR Code',
+    contexts: ['all']
+  });
+
   // Capture screenshot submenu
   browser.contextMenus.create({
     id: 'annotatepro-screenshot-parent',
@@ -497,6 +505,13 @@ async function createContextMenus() {
     id: 'annotatepro-capture-visible',
     parentId: 'annotatepro-screenshot-parent',
     title: 'Visible Area',
+    contexts: ['all']
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-capture-visible-timer',
+    parentId: 'annotatepro-screenshot-parent',
+    title: 'Visible Area (5s Timer)',
     contexts: ['all']
   });
 
@@ -539,10 +554,14 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_TOGGLE_SIDEBAR' });
   } else if (menuId === 'annotatepro-sidebar-position') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_SWITCH_SIDEBAR_POSITION' });
+  } else if (menuId === 'annotatepro-generate-qr') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_GENERATE_QR' });
   } else if (menuId === 'annotatepro-capture-area') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_AREA' });
   } else if (menuId === 'annotatepro-capture-visible') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_VISIBLE' });
+  } else if (menuId === 'annotatepro-capture-visible-timer') {
+    browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_VISIBLE_TIMER' });
   } else if (menuId === 'annotatepro-capture-fullpage') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_FULL_PAGE' });
   }

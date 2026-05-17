@@ -59,6 +59,13 @@
   display: flex;
   flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Prevent background page scroll */
+  overscroll-behavior: contain;
+}
+
+/* Prevent body scroll when editor is open */
+body.annotatepro-editor-open {
+  overflow: hidden !important;
 }
 
 /* Editor Header */
@@ -251,38 +258,105 @@
 /* Canvas Container */
 .annotatepro-editor-canvas-container {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
   overflow: auto;
   background: #111;
+  position: relative;
 }
 
 .annotatepro-editor-canvas-wrapper {
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  /* When zoomed larger than container, position from top-left instead */
+}
+
+.annotatepro-editor-canvas-container.zoomed-large .annotatepro-editor-canvas-wrapper {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  margin: 20px;
 }
 
 .annotatepro-editor-canvas {
   display: block;
-  max-width: 100%;
-  max-height: calc(100vh - 160px);
   cursor: crosshair;
+  position: relative;
+  z-index: 1;
 }
 
 /* Text Input Overlay */
 .annotatepro-text-input-overlay {
   position: absolute;
-  background: transparent;
-  border: 2px dashed #6366f1;
+  background: rgba(255, 255, 255, 0.95);
+  border: 3px solid #6366f1;
+  border-radius: 6px;
   outline: none;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 16px;
+  padding: 10px 14px;
+  min-width: 180px;
+  min-height: 50px;
+  max-width: 400px;
+  color: #000;
+  resize: both;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 99999;
+}
+
+.annotatepro-text-input-overlay::placeholder {
+  color: #666;
+  font-style: italic;
+}
+
+.annotatepro-text-input-overlay:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+}
+
+/* Draggable Text Annotations */
+.annotatepro-text-annotation {
+  position: absolute;
+  cursor: move;
   padding: 4px 8px;
-  min-width: 100px;
+  border-radius: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.2;
+  white-space: pre-wrap;
+  user-select: none;
+  z-index: 100;
+  transition: box-shadow 0.15s, transform 0.1s;
+}
+
+.annotatepro-text-annotation:hover {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5);
+}
+
+.annotatepro-text-annotation:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px #6366f1;
+}
+
+.annotatepro-text-annotation.dragging {
+  opacity: 0.8;
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.annotatepro-text-annotation-input {
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid #6366f1;
+  border-radius: 4px;
+  outline: none;
+  font-family: inherit;
+  font-size: inherit;
   color: inherit;
-  resize: none;
+  padding: 8px 10px;
+  min-width: 150px;
+  min-height: 40px;
+  resize: both;
 }
 
 /* Toast Notification */
@@ -406,4 +480,108 @@
 .annotatepro-capture-progress-count {
   color: #888;
   font-size: 13px;
+}
+
+/* Countdown Timer Overlay - Non-blocking corner display */
+.annotatepro-countdown-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-countdown-content {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.85);
+  padding: 16px 24px;
+  border-radius: 12px;
+  text-align: center;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+}
+
+.annotatepro-countdown-number {
+  font-size: 48px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.annotatepro-countdown-number.annotatepro-countdown-pulse {
+  transform: scale(1.15);
+}
+
+.annotatepro-countdown-text {
+  color: #aaa;
+  font-size: 13px;
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+.annotatepro-countdown-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.annotatepro-countdown-cancel:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Zoom Level Display */
+.annotatepro-zoom-level {
+  color: #ccc;
+  font-size: 12px;
+  min-width: 48px;
+  text-align: center;
+  font-weight: 500;
+  padding: 0 4px;
+}
+
+/* Crop Overlay */
+.annotatepro-crop-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.annotatepro-crop-selection {
+  position: absolute;
+  border: 2px dashed #6366f1;
+  background: rgba(99, 102, 241, 0.15);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+}
+
+.annotatepro-crop-dimensions {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Pan tool cursor */
+.annotatepro-editor-canvas[data-tool="pan"] {
+  cursor: grab;
+}
+
+.annotatepro-editor-canvas[data-tool="pan"]:active {
+  cursor: grabbing;
 }

@@ -1340,3 +1340,213 @@
     background: #450a0a;
   }
 }
+
+/* ============ QR Code Modal ============ */
+
+.annotatepro-qr-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-qr-content {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  width: 90%;
+  max-width: 400px;
+  overflow: hidden;
+}
+
+.annotatepro-qr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.annotatepro-qr-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111;
+}
+
+.annotatepro-qr-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.annotatepro-qr-close:hover {
+  color: #111;
+}
+
+.annotatepro-qr-body {
+  padding: 20px;
+}
+
+.annotatepro-qr-body label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.annotatepro-qr-input {
+  width: 100%;
+  min-height: 80px;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.annotatepro-qr-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.annotatepro-qr-preview {
+  margin-top: 20px;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  padding: 10px;
+}
+
+.annotatepro-qr-preview canvas {
+  display: block !important;
+  padding: 16px;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.annotatepro-qr-preview img {
+  display: none !important;
+}
+
+.annotatepro-qr-preview p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.annotatepro-qr-footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.annotatepro-qr-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.annotatepro-qr-copy {
+  background: #6366f1;
+  color: #fff;
+}
+
+.annotatepro-qr-copy:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.annotatepro-qr-download {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.annotatepro-qr-download:hover:not(:disabled) {
+  background: #d1d5db;
+}
+
+.annotatepro-qr-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  .annotatepro-qr-content {
+    background: #1f2937;
+  }
+
+  .annotatepro-qr-header {
+    border-color: #374151;
+  }
+
+  .annotatepro-qr-header h3 {
+    color: #f9fafb;
+  }
+
+  .annotatepro-qr-close {
+    color: #9ca3af;
+  }
+
+  .annotatepro-qr-close:hover {
+    color: #f9fafb;
+  }
+
+  .annotatepro-qr-body label {
+    color: #d1d5db;
+  }
+
+  .annotatepro-qr-input {
+    background: #111827;
+    border-color: #374151;
+    color: #f9fafb;
+  }
+
+  .annotatepro-qr-input:focus {
+    border-color: #6366f1;
+  }
+
+  .annotatepro-qr-preview {
+    background: #111827;
+    border-color: #374151;
+  }
+
+  .annotatepro-qr-footer {
+    background: #111827;
+    border-color: #374151;
+  }
+
+  .annotatepro-qr-download {
+    background: #374151;
+    color: #e5e7eb;
+  }
+
+  .annotatepro-qr-download:hover:not(:disabled) {
+    background: #4b5563;
+  }
+}

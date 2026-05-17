@@ -31,6 +31,30 @@
   let historyIndex = -1;
   const MAX_HISTORY = 50;
 
+  // Zoom state
+  let zoomLevel = 1;
+  const ZOOM_MIN = 0.25;
+  const ZOOM_MAX = 4;
+  const ZOOM_STEP = 0.25;
+
+  // Crop state
+  let isCropping = false;
+  let cropStartX = 0;
+  let cropStartY = 0;
+  let cropOverlay = null;
+
+  // Pan state
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let spaceHeld = false;
+  let previousTool = null;
+
+  // Text annotations (draggable)
+  let textAnnotations = [];
+  let nextTextId = 1;
+  let selectedTextAnnotation = null;
+
   // Tool colors
   const COLORS = [
     '#FF0000', // Red
@@ -125,7 +149,7 @@
 
       // Minimum selection size
       if (width < 10 || height < 10) {
-        showToast('Selection too small', 'error');
+        showToast('Selection Too Small', 'error');
         return;
       }
 
@@ -142,7 +166,7 @@
         }
       } catch (error) {
         console.error('AnnotatePro: Screenshot capture failed', error);
-        showToast('Failed to capture screenshot', 'error');
+        showToast('Failed To Capture Screenshot', 'error');
       }
     }
 
@@ -177,7 +201,76 @@
       }
     } catch (error) {
       console.error('AnnotatePro: Visible area capture failed', error);
-      showToast('Failed to capture visible area', 'error');
+      showToast('Failed To Capture Visible Area', 'error');
+    }
+  }
+
+  /**
+   * Show countdown overlay (non-blocking so user can interact with page)
+   */
+  function showCountdown(seconds) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'annotatepro-countdown-overlay';
+      overlay.innerHTML = `
+        <div class="annotatepro-countdown-content">
+          <div class="annotatepro-countdown-number">${seconds}</div>
+          <div class="annotatepro-countdown-text">Prepare your screen...</div>
+          <button class="annotatepro-countdown-cancel">Cancel (ESC)</button>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const numberEl = overlay.querySelector('.annotatepro-countdown-number');
+      const cancelBtn = overlay.querySelector('.annotatepro-countdown-cancel');
+      let cancelled = false;
+      let currentCount = seconds;
+
+      cancelBtn.addEventListener('click', () => {
+        cancelled = true;
+        overlay.remove();
+        resolve(false);
+      });
+
+      // Handle ESC key
+      function onKeyDown(e) {
+        if (e.key === 'Escape') {
+          cancelled = true;
+          overlay.remove();
+          document.removeEventListener('keydown', onKeyDown);
+          resolve(false);
+        }
+      }
+      document.addEventListener('keydown', onKeyDown);
+
+      const interval = setInterval(() => {
+        if (cancelled) {
+          clearInterval(interval);
+          return;
+        }
+
+        currentCount--;
+        if (currentCount > 0) {
+          numberEl.textContent = currentCount;
+          numberEl.classList.add('annotatepro-countdown-pulse');
+          setTimeout(() => numberEl.classList.remove('annotatepro-countdown-pulse'), 200);
+        } else {
+          clearInterval(interval);
+          document.removeEventListener('keydown', onKeyDown);
+          overlay.remove();
+          resolve(true);
+        }
+      }, 1000);
+    });
+  }
+
+  /**
+   * Capture the visible area with a 5 second countdown timer
+   */
+  async function captureVisibleWithTimer() {
+    const proceed = await showCountdown(5);
+    if (proceed) {
+      await captureVisibleArea();
     }
   }
 
@@ -213,7 +306,7 @@
       }
     } catch (error) {
       console.error('AnnotatePro: Element capture failed', error);
-      showToast('Failed to capture element', 'error');
+      showToast('Failed To Capture Element', 'error');
     }
   }
 
@@ -240,7 +333,7 @@
     // Check for canvas size limits (typically ~16k pixels max)
     const MAX_DIMENSION = 16000;
     if (pageWidth > MAX_DIMENSION || pageHeight > MAX_DIMENSION) {
-      showToast('Page too large for full capture. Try visible area instead.', 'error');
+      showToast('Page Too Large For Full Capture. Try Visible Area Instead.', 'error');
       return;
     }
 
@@ -328,7 +421,7 @@
       console.error('AnnotatePro: Whole page capture failed', error);
       window.scrollTo(originalScrollX, originalScrollY);
       hideCaptureProgress();
-      showToast('Failed to capture whole page', 'error');
+      showToast('Failed To Capture Whole Page', 'error');
     }
   }
 
@@ -439,6 +532,13 @@
     currentTool = 'pen';
     currentColor = '#FF0000';
     strokeWidth = SIZES.medium;
+    zoomLevel = 1;
+    isCropping = false;
+    isPanning = false;
+    spaceHeld = false;
+    previousTool = null;
+    textAnnotations = [];
+    nextTextId = 1;
 
     // Create editor UI
     editorEl = document.createElement('div');
@@ -494,6 +594,24 @@
               <line x1="8" y1="20" x2="16" y2="20"/>
             </svg>
           </button>
+          <button class="annotatepro-tool-btn" data-tool="crop" title="Crop (C)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 2v4"/>
+              <path d="M2 6h4"/>
+              <path d="M6 6v12h12"/>
+              <path d="M18 22v-4"/>
+              <path d="M22 18h-4"/>
+              <path d="M18 18V6H6"/>
+            </svg>
+          </button>
+          <button class="annotatepro-tool-btn" data-tool="pan" title="Pan (H / Hold Space)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
+              <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
+              <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
+              <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+            </svg>
+          </button>
         </div>
         <div class="annotatepro-toolbar-divider"></div>
         <div class="annotatepro-toolbar-group">
@@ -534,6 +652,32 @@
             </svg>
           </button>
         </div>
+        <div class="annotatepro-toolbar-divider"></div>
+        <div class="annotatepro-toolbar-group">
+          <span class="annotatepro-toolbar-label">Zoom</span>
+          <button class="annotatepro-tool-btn" data-action="zoom-out" title="Zoom Out (-)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              <line x1="8" y1="11" x2="14" y2="11"/>
+            </svg>
+          </button>
+          <span class="annotatepro-zoom-level" data-zoom-display>100%</span>
+          <button class="annotatepro-tool-btn" data-action="zoom-in" title="Zoom In (+)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              <line x1="11" y1="8" x2="11" y2="14"/>
+              <line x1="8" y1="11" x2="14" y2="11"/>
+            </svg>
+          </button>
+          <button class="annotatepro-tool-btn" data-action="zoom-reset" title="Reset Zoom (0)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="annotatepro-editor-canvas-container">
         <div class="annotatepro-editor-canvas-wrapper">
@@ -544,11 +688,14 @@
         <kbd>ESC</kbd> Close &nbsp;
         <kbd>Ctrl+Z</kbd> Undo &nbsp;
         <kbd>Ctrl+Y</kbd> Redo &nbsp;
-        <kbd>Ctrl+C</kbd> Copy
+        <kbd>+/-</kbd> Zoom &nbsp;
+        <kbd>Space</kbd> Pan &nbsp;
+        <kbd>C</kbd> Crop
       </div>
     `;
 
     document.body.appendChild(editorEl);
+    document.body.classList.add('annotatepro-editor-open');
 
     // Get canvas and context
     canvas = editorEl.querySelector('.annotatepro-editor-canvas');
@@ -562,6 +709,12 @@
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0);
       saveToHistory();
+
+      // Set initial zoom to account for device pixel ratio
+      // so the image displays at actual screen size
+      const dpr = window.devicePixelRatio || 1;
+      zoomLevel = 1 / dpr;
+      updateZoom();
     };
     img.src = imageDataUrl;
 
@@ -581,10 +734,13 @@
 
     // Tool buttons
     editorEl.querySelectorAll('[data-tool]').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         currentTool = btn.dataset.tool;
         editorEl.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        updateCanvasCursor();
+        console.log('Tool Selected:', currentTool);
       });
     });
 
@@ -594,6 +750,12 @@
         currentColor = btn.dataset.color;
         editorEl.querySelectorAll('[data-color]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+
+        // Update selected text annotation color if any
+        if (selectedTextAnnotation) {
+          selectedTextAnnotation.color = currentColor;
+          updateTextAnnotationColor(selectedTextAnnotation);
+        }
       });
     });
 
@@ -610,6 +772,11 @@
     editorEl.querySelector('[data-action="undo"]').addEventListener('click', undo);
     editorEl.querySelector('[data-action="redo"]').addEventListener('click', redo);
 
+    // Zoom buttons
+    editorEl.querySelector('[data-action="zoom-in"]').addEventListener('click', zoomIn);
+    editorEl.querySelector('[data-action="zoom-out"]').addEventListener('click', zoomOut);
+    editorEl.querySelector('[data-action="zoom-reset"]').addEventListener('click', zoomReset);
+
     // Canvas drawing events
     canvas.addEventListener('mousedown', onCanvasMouseDown);
     canvas.addEventListener('mousemove', onCanvasMouseMove);
@@ -618,6 +785,25 @@
 
     // Keyboard shortcuts
     document.addEventListener('keydown', onEditorKeyDown);
+    document.addEventListener('keyup', onEditorKeyUp);
+
+    // Prevent scroll wheel from affecting page behind, use for zoom instead
+    editorEl.addEventListener('wheel', onEditorWheel, { passive: false });
+  }
+
+  /**
+   * Handle mouse wheel for zoom
+   */
+  function onEditorWheel(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Use wheel for zooming
+    if (e.deltaY < 0) {
+      zoomIn();
+    } else if (e.deltaY > 0) {
+      zoomOut();
+    }
   }
 
   /**
@@ -637,16 +823,42 @@
    * Canvas mouse down handler
    */
   function onCanvasMouseDown(e) {
+    console.log('Canvas MouseDown Fired, currentTool:', currentTool);
     const coords = getCanvasCoords(e);
     startX = coords.x;
     startY = coords.y;
     lastX = coords.x;
     lastY = coords.y;
-    isDrawing = true;
+
+    // Clear text selection when clicking on canvas
+    clearTextSelection();
 
     if (currentTool === 'text') {
-      isDrawing = false;
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('Text Tool Clicked At:', coords.x, coords.y);
       showTextInput(coords.x, coords.y);
+      return;
+    }
+
+    isDrawing = true;
+
+    if (currentTool === 'crop') {
+      isCropping = true;
+      cropStartX = coords.x;
+      cropStartY = coords.y;
+      showCropOverlay();
+      // Listen for mouseup anywhere in case user releases outside canvas
+      document.addEventListener('mouseup', onDocumentMouseUpForCrop);
+      return;
+    }
+
+    if (currentTool === 'pan') {
+      e.preventDefault();
+      isPanning = true;
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      canvas.style.cursor = 'grabbing';
       return;
     }
 
@@ -664,6 +876,25 @@
    * Canvas mouse move handler
    */
   function onCanvasMouseMove(e) {
+    if (isPanning) {
+      e.preventDefault();
+      e.stopPropagation();
+      const container = editorEl.querySelector('.annotatepro-editor-canvas-container');
+      const deltaX = panStartX - e.clientX;
+      const deltaY = panStartY - e.clientY;
+      container.scrollLeft += deltaX;
+      container.scrollTop += deltaY;
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      return;
+    }
+
+    if (isCropping) {
+      const coords = getCanvasCoords(e);
+      updateCropOverlay(coords.x, coords.y);
+      return;
+    }
+
     if (!isDrawing) return;
 
     const coords = getCanvasCoords(e);
@@ -684,6 +915,22 @@
    * Canvas mouse up handler
    */
   function onCanvasMouseUp(e) {
+    if (isPanning) {
+      isPanning = false;
+      canvas.style.cursor = currentTool === 'pan' ? 'grab' : 'crosshair';
+      return;
+    }
+
+    if (isCropping) {
+      // Don't finalize crop on mouseleave - only on actual mouseup
+      if (e.type === 'mouseleave') return;
+      // Remove document listener since we're handling it here
+      document.removeEventListener('mouseup', onDocumentMouseUpForCrop);
+      const coords = getCanvasCoords(e);
+      finishCrop(coords.x, coords.y);
+      return;
+    }
+
     if (!isDrawing) return;
     isDrawing = false;
 
@@ -756,44 +1003,267 @@
   }
 
   /**
-   * Show text input at position
+   * Create a new text annotation at position
    */
   function showTextInput(x, y) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = rect.width / canvas.width;
-    const scaleY = rect.height / canvas.height;
+    console.log('ShowTextInput Called:', x, y, 'zoomLevel:', zoomLevel);
 
-    const input = document.createElement('textarea');
-    input.className = 'annotatepro-text-input-overlay';
-    input.style.left = (rect.left + x * scaleX) + 'px';
-    input.style.top = (rect.top + y * scaleY) + 'px';
-    input.style.color = currentColor;
-    input.style.fontSize = (12 + strokeWidth * 2) + 'px';
+    const baseFontSize = 12 + strokeWidth * 4;
 
+    // Create annotation object
+    const annotation = {
+      id: nextTextId++,
+      x: x,
+      y: y,
+      text: '',
+      color: currentColor,
+      fontSize: baseFontSize
+    };
+
+    // Create and show the editable text element
+    createTextElement(annotation, true);
+  }
+
+  /**
+   * Create a draggable text element for an annotation
+   */
+  function createTextElement(annotation, isEditing = false) {
     const wrapper = editorEl.querySelector('.annotatepro-editor-canvas-wrapper');
-    wrapper.appendChild(input);
-    input.focus();
-
-    function commitText() {
-      const text = input.value.trim();
-      if (text) {
-        ctx.font = `${12 + strokeWidth * 2}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-        ctx.fillStyle = currentColor;
-        ctx.fillText(text, x, y + (12 + strokeWidth * 2));
-        saveToHistory();
-      }
-      input.remove();
+    if (!wrapper) {
+      console.error('Canvas Wrapper Not Found!');
+      return;
     }
 
-    input.addEventListener('blur', commitText);
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        commitText();
+    // Remove existing element for this annotation if any
+    const existing = wrapper.querySelector(`[data-text-id="${annotation.id}"]`);
+    if (existing) existing.remove();
+
+    const displayX = annotation.x * zoomLevel;
+    const displayY = annotation.y * zoomLevel;
+    const displayFontSize = Math.max(14, annotation.fontSize * zoomLevel);
+
+    const el = document.createElement('div');
+    el.className = 'annotatepro-text-annotation';
+    el.dataset.textId = annotation.id;
+    el.style.left = displayX + 'px';
+    el.style.top = displayY + 'px';
+    el.style.color = annotation.color;
+    el.style.fontSize = displayFontSize + 'px';
+
+    if (isEditing || !annotation.text) {
+      // Show textarea for editing
+      const textarea = document.createElement('textarea');
+      textarea.className = 'annotatepro-text-annotation-input';
+      textarea.value = annotation.text;
+      textarea.placeholder = 'Type here...';
+      textarea.autocapitalize = 'sentences';
+      textarea.style.color = annotation.color;
+      textarea.style.fontSize = displayFontSize + 'px';
+
+      // Auto-capitalize first letter on desktop
+      textarea.addEventListener('input', () => {
+        const val = textarea.value;
+        if (val.length === 1 && val[0] !== val[0].toUpperCase()) {
+          textarea.value = val[0].toUpperCase();
+        }
+      });
+
+      el.appendChild(textarea);
+
+      wrapper.appendChild(el);
+
+      // Select this annotation when editing
+      selectTextAnnotation(annotation);
+
+      setTimeout(() => {
+        textarea.focus();
+        if (annotation.text) textarea.select();
+      }, 10);
+
+      let committed = false;
+
+      function commitText() {
+        if (committed) return;
+        committed = true;
+
+        const text = textarea.value.trim();
+        if (text) {
+          annotation.text = text;
+          // Add to annotations if new
+          if (!textAnnotations.find(a => a.id === annotation.id)) {
+            textAnnotations.push(annotation);
+          }
+          // Re-render as static text
+          createTextElement(annotation, false);
+        } else {
+          // Remove if empty
+          removeTextAnnotation(annotation.id);
+        }
       }
-      if (e.key === 'Escape') {
-        input.remove();
+
+      textarea.addEventListener('blur', commitText);
+      textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          commitText();
+        }
+        if (e.key === 'Escape') {
+          committed = true;
+          if (!annotation.text) {
+            el.remove();
+          } else {
+            createTextElement(annotation, false);
+          }
+        }
+        e.stopPropagation();
+      });
+    } else {
+      // Show static text (draggable)
+      el.innerHTML = annotation.text.replace(/\n/g, '<br>');
+      el.draggable = false; // We'll handle drag manually
+
+      // Double-click to edit
+      el.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        createTextElement(annotation, true);
+      });
+
+      // Drag to move
+      let isDragging = false;
+      let dragStartX, dragStartY, origX, origY;
+
+      el.addEventListener('mousedown', (e) => {
+        if (currentTool !== 'text') return;
+        e.stopPropagation();
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        origX = annotation.x;
+        origY = annotation.y;
+        el.style.cursor = 'grabbing';
+        el.classList.add('dragging');
+      });
+
+      document.addEventListener('mousemove', onDragMove);
+      document.addEventListener('mouseup', onDragEnd);
+
+      function onDragMove(e) {
+        if (!isDragging) return;
+        const deltaX = (e.clientX - dragStartX) / zoomLevel;
+        const deltaY = (e.clientY - dragStartY) / zoomLevel;
+
+        // Constrain to canvas bounds
+        const newX = Math.max(0, Math.min(canvas.width - 20, origX + deltaX));
+        const newY = Math.max(0, Math.min(canvas.height - 20, origY + deltaY));
+
+        annotation.x = newX;
+        annotation.y = newY;
+        el.style.left = (newX * zoomLevel) + 'px';
+        el.style.top = (newY * zoomLevel) + 'px';
       }
+
+      function onDragEnd() {
+        if (!isDragging) return;
+        isDragging = false;
+        el.style.cursor = 'move';
+        el.classList.remove('dragging');
+      }
+
+      // Delete with Delete key when focused
+      el.tabIndex = 0;
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          removeTextAnnotation(annotation.id);
+        }
+        e.stopPropagation();
+      });
+
+      // Select this annotation when focused or clicked
+      el.addEventListener('focus', () => {
+        selectTextAnnotation(annotation);
+      });
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectTextAnnotation(annotation);
+        el.focus();
+      });
+
+      wrapper.appendChild(el);
+    }
+  }
+
+  /**
+   * Remove a text annotation
+   */
+  function removeTextAnnotation(id) {
+    textAnnotations = textAnnotations.filter(a => a.id !== id);
+    const wrapper = editorEl.querySelector('.annotatepro-editor-canvas-wrapper');
+    const el = wrapper?.querySelector(`[data-text-id="${id}"]`);
+    if (el) el.remove();
+    // Clear selection if this was selected
+    if (selectedTextAnnotation && selectedTextAnnotation.id === id) {
+      selectedTextAnnotation = null;
+    }
+  }
+
+  /**
+   * Update the DOM element color for a text annotation
+   */
+  function updateTextAnnotationColor(annotation) {
+    const wrapper = editorEl.querySelector('.annotatepro-editor-canvas-wrapper');
+    const el = wrapper?.querySelector(`[data-text-id="${annotation.id}"]`);
+    if (el) {
+      el.style.color = annotation.color;
+      // Also update textarea if editing
+      const textarea = el.querySelector('textarea');
+      if (textarea) {
+        textarea.style.color = annotation.color;
+      }
+    }
+  }
+
+  /**
+   * Select a text annotation (highlight in ribbon)
+   */
+  function selectTextAnnotation(annotation) {
+    selectedTextAnnotation = annotation;
+    // Update color picker to match selected annotation's color
+    if (annotation) {
+      currentColor = annotation.color;
+      editorEl.querySelectorAll('[data-color]').forEach(b => {
+        b.classList.toggle('active', b.dataset.color === currentColor);
+      });
+    }
+  }
+
+  /**
+   * Clear text annotation selection
+   */
+  function clearTextSelection() {
+    selectedTextAnnotation = null;
+  }
+
+  /**
+   * Re-render all text annotations (after zoom change)
+   */
+  function rerenderTextAnnotations() {
+    textAnnotations.forEach(ann => createTextElement(ann, false));
+  }
+
+  /**
+   * Flatten text annotations to canvas (for export)
+   */
+  function flattenTextToCanvas() {
+    textAnnotations.forEach(ann => {
+      ctx.font = `${ann.fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.fillStyle = ann.color;
+
+      const lines = ann.text.split('\n');
+      const lineHeight = ann.fontSize * 1.2;
+      lines.forEach((line, index) => {
+        ctx.fillText(line, ann.x, ann.y + ann.fontSize + (index * lineHeight));
+      });
     });
   }
 
@@ -806,8 +1276,13 @@
       history = history.slice(0, historyIndex + 1);
     }
 
-    // Save current state
-    history.push(canvas.toDataURL());
+    // Save current state as ImageData along with dimensions
+    const state = {
+      imageData: ctx.getImageData(0, 0, canvas.width, canvas.height),
+      width: canvas.width,
+      height: canvas.height
+    };
+    history.push(state);
     historyIndex++;
 
     // Limit history size
@@ -818,16 +1293,17 @@
   }
 
   /**
-   * Restore canvas from current history state
+   * Restore canvas from current history state (synchronous)
    */
   function restoreFromHistory() {
     if (historyIndex >= 0 && history[historyIndex]) {
-      const img = new Image();
-      img.onload = () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-      };
-      img.src = history[historyIndex];
+      const state = history[historyIndex];
+      // Restore canvas dimensions if they changed (e.g., after crop)
+      if (canvas.width !== state.width || canvas.height !== state.height) {
+        canvas.width = state.width;
+        canvas.height = state.height;
+      }
+      ctx.putImageData(state.imageData, 0, 0);
     }
   }
 
@@ -837,12 +1313,8 @@
   function undo() {
     if (historyIndex > 0) {
       historyIndex--;
-      const img = new Image();
-      img.onload = () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-      };
-      img.src = history[historyIndex];
+      restoreFromHistory();
+      updateZoom();
     }
   }
 
@@ -852,12 +1324,202 @@
   function redo() {
     if (historyIndex < history.length - 1) {
       historyIndex++;
-      const img = new Image();
-      img.onload = () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-      };
-      img.src = history[historyIndex];
+      restoreFromHistory();
+      updateZoom();
+    }
+  }
+
+  /**
+   * Update zoom display and canvas scale
+   */
+  function updateZoom() {
+    const container = editorEl.querySelector('.annotatepro-editor-canvas-container');
+    const zoomDisplay = editorEl.querySelector('[data-zoom-display]');
+    const dpr = window.devicePixelRatio || 1;
+
+    // Set actual display size (not transform) so scrolling works properly
+    if (canvas) {
+      const displayWidth = canvas.width * zoomLevel;
+      const displayHeight = canvas.height * zoomLevel;
+      canvas.style.width = displayWidth + 'px';
+      canvas.style.height = displayHeight + 'px';
+
+      // Check if canvas is larger than container - switch to scrollable mode
+      if (container) {
+        const containerRect = container.getBoundingClientRect();
+        const isLarge = displayWidth > containerRect.width - 40 || displayHeight > containerRect.height - 40;
+        container.classList.toggle('zoomed-large', isLarge);
+      }
+    }
+
+    if (zoomDisplay) {
+      // Show zoom relative to actual screen size (100% = 1/dpr)
+      const displayPercent = Math.round(zoomLevel * dpr * 100);
+      zoomDisplay.textContent = `${displayPercent}%`;
+    }
+
+    // Re-render text annotations at new zoom level
+    rerenderTextAnnotations();
+  }
+
+  /**
+   * Zoom in
+   */
+  function zoomIn() {
+    if (zoomLevel < ZOOM_MAX) {
+      zoomLevel = Math.min(ZOOM_MAX, zoomLevel + ZOOM_STEP);
+      updateZoom();
+    }
+  }
+
+  /**
+   * Zoom out
+   */
+  function zoomOut() {
+    if (zoomLevel > ZOOM_MIN) {
+      zoomLevel = Math.max(ZOOM_MIN, zoomLevel - ZOOM_STEP);
+      updateZoom();
+    }
+  }
+
+  /**
+   * Reset zoom to actual screen size (accounting for DPR)
+   */
+  function zoomReset() {
+    const dpr = window.devicePixelRatio || 1;
+    zoomLevel = 1 / dpr;
+    updateZoom();
+  }
+
+  /**
+   * Show crop overlay on canvas
+   */
+  function showCropOverlay() {
+    const wrapper = editorEl.querySelector('.annotatepro-editor-canvas-wrapper');
+
+    cropOverlay = document.createElement('div');
+    cropOverlay.className = 'annotatepro-crop-overlay';
+    cropOverlay.innerHTML = `
+      <div class="annotatepro-crop-selection"></div>
+      <div class="annotatepro-crop-dimensions"></div>
+    `;
+    wrapper.appendChild(cropOverlay);
+  }
+
+  /**
+   * Update crop selection overlay position and size
+   */
+  function updateCropOverlay(currentX, currentY) {
+    if (!cropOverlay) return;
+
+    const selection = cropOverlay.querySelector('.annotatepro-crop-selection');
+    const dimensions = cropOverlay.querySelector('.annotatepro-crop-dimensions');
+    const rect = canvas.getBoundingClientRect();
+
+    // Calculate selection bounds in canvas coordinates
+    const left = Math.min(cropStartX, currentX);
+    const top = Math.min(cropStartY, currentY);
+    const width = Math.abs(currentX - cropStartX);
+    const height = Math.abs(currentY - cropStartY);
+
+    // Convert to display coordinates (account for zoom)
+    const scaleX = rect.width / canvas.width;
+    const scaleY = rect.height / canvas.height;
+
+    selection.style.left = (left * scaleX) + 'px';
+    selection.style.top = (top * scaleY) + 'px';
+    selection.style.width = (width * scaleX) + 'px';
+    selection.style.height = (height * scaleY) + 'px';
+
+    dimensions.style.left = ((left + width) * scaleX + 8) + 'px';
+    dimensions.style.top = ((top + height / 2) * scaleY) + 'px';
+    dimensions.textContent = `${Math.round(width)} x ${Math.round(height)}`;
+  }
+
+  /**
+   * Document mouseup handler for crop (catches releases outside canvas)
+   */
+  function onDocumentMouseUpForCrop(e) {
+    if (!isCropping) return;
+    document.removeEventListener('mouseup', onDocumentMouseUpForCrop);
+
+    // Get coordinates - if outside canvas, clamp to canvas bounds
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    let endX = (e.clientX - rect.left) * scaleX;
+    let endY = (e.clientY - rect.top) * scaleY;
+
+    // Clamp to canvas bounds
+    endX = Math.max(0, Math.min(canvas.width, endX));
+    endY = Math.max(0, Math.min(canvas.height, endY));
+
+    finishCrop(endX, endY);
+  }
+
+  /**
+   * Finish crop operation
+   */
+  function finishCrop(endX, endY) {
+    isCropping = false;
+    isDrawing = false;
+
+    // Remove document listener if still attached
+    document.removeEventListener('mouseup', onDocumentMouseUpForCrop);
+
+    // Remove overlay
+    if (cropOverlay) {
+      cropOverlay.remove();
+      cropOverlay = null;
+    }
+
+    // Calculate crop bounds
+    const left = Math.round(Math.min(cropStartX, endX));
+    const top = Math.round(Math.min(cropStartY, endY));
+    const width = Math.round(Math.abs(endX - cropStartX));
+    const height = Math.round(Math.abs(endY - cropStartY));
+
+    // Minimum crop size
+    if (width < 10 || height < 10) {
+      showToast('Selection Too Small To Crop', 'error');
+      return;
+    }
+
+    // Clamp to canvas bounds
+    const cropX = Math.max(0, left);
+    const cropY = Math.max(0, top);
+    const cropW = Math.min(width, canvas.width - cropX);
+    const cropH = Math.min(height, canvas.height - cropY);
+
+    // Get the cropped image data
+    const imageData = ctx.getImageData(cropX, cropY, cropW, cropH);
+
+    // Resize canvas
+    canvas.width = cropW;
+    canvas.height = cropH;
+
+    // Put the cropped image data
+    ctx.putImageData(imageData, 0, 0);
+
+    // Save to history
+    saveToHistory();
+
+    // Reset zoom after crop
+    zoomReset();
+
+    showToast('Image Cropped', 'success');
+  }
+
+  /**
+   * Cancel crop operation
+   */
+  function cancelCrop() {
+    isCropping = false;
+    document.removeEventListener('mouseup', onDocumentMouseUpForCrop);
+    if (cropOverlay) {
+      cropOverlay.remove();
+      cropOverlay = null;
     }
   }
 
@@ -866,18 +1528,24 @@
    */
   async function copyToClipboard() {
     try {
+      // Flatten text annotations to canvas before copying
+      flattenTextToCanvas();
+
       const blob = await new Promise(resolve => {
         canvas.toBlob(resolve, 'image/png');
       });
+
+      // Restore canvas state (remove flattened text)
+      restoreFromHistory();
 
       await navigator.clipboard.write([
         new ClipboardItem({ 'image/png': blob })
       ]);
 
-      showToast('Copied to clipboard!', 'success');
+      showToast('Copied To Clipboard!', 'success');
     } catch (error) {
       console.error('AnnotatePro: Failed to copy to clipboard', error);
-      showToast('Failed to copy to clipboard', 'error');
+      showToast('Failed To Copy To Clipboard', 'error');
     }
   }
 
@@ -885,14 +1553,21 @@
    * Download screenshot as PNG
    */
   function downloadScreenshot() {
+    // Flatten text annotations to canvas before downloading
+    flattenTextToCanvas();
+
     const dataUrl = canvas.toDataURL('image/png');
+
+    // Restore canvas state (remove flattened text)
+    restoreFromHistory();
+
     const link = document.createElement('a');
     link.download = `screenshot-${Date.now()}.png`;
     link.href = dataUrl;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Screenshot downloaded!', 'success');
+    showToast('Screenshot Downloaded!', 'success');
   }
 
   /**
@@ -900,6 +1575,9 @@
    */
   function exportAsPdf() {
     try {
+      // Flatten text annotations to canvas before exporting
+      flattenTextToCanvas();
+
       // Get image as JPEG for smaller PDF size
       const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
       const jpegBase64 = jpegDataUrl.split(',')[1];
@@ -943,10 +1621,15 @@
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      showToast('PDF exported!', 'success');
+      // Restore canvas state (remove flattened text)
+      restoreFromHistory();
+
+      showToast('PDF Exported!', 'success');
     } catch (error) {
       console.error('AnnotatePro: Failed to export PDF', error);
-      showToast('Failed to export PDF', 'error');
+      showToast('Failed To Export PDF', 'error');
+      // Restore canvas state on error too
+      restoreFromHistory();
     }
   }
 
@@ -1046,6 +1729,8 @@
   function closeEditor() {
     if (editorEl) {
       document.removeEventListener('keydown', onEditorKeyDown);
+      document.removeEventListener('keyup', onEditorKeyUp);
+      document.body.classList.remove('annotatepro-editor-open');
       editorEl.remove();
       editorEl = null;
       canvas = null;
@@ -1053,6 +1738,7 @@
       originalImage = null;
       history = [];
       historyIndex = -1;
+      textAnnotations = [];
     }
   }
 
@@ -1063,6 +1749,11 @@
     if (!editorEl) return;
 
     if (e.key === 'Escape') {
+      // Cancel crop if in progress
+      if (isCropping) {
+        cancelCrop();
+        return;
+      }
       closeEditor();
       return;
     }
@@ -1080,15 +1771,84 @@
       }
     }
 
-    // Tool shortcuts
+    // Tool shortcuts (without modifiers)
     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-      const toolMap = { p: 'pen', r: 'rect', e: 'ellipse', a: 'arrow', t: 'text' };
+      const toolMap = { p: 'pen', r: 'rect', e: 'ellipse', a: 'arrow', t: 'text', c: 'crop', h: 'pan' };
       if (toolMap[e.key]) {
         currentTool = toolMap[e.key];
         editorEl.querySelectorAll('[data-tool]').forEach(b => {
           b.classList.toggle('active', b.dataset.tool === currentTool);
         });
+        updateCanvasCursor();
       }
+
+      // Space bar for temporary pan mode
+      if (e.key === ' ' && !spaceHeld) {
+        e.preventDefault();
+        spaceHeld = true;
+        previousTool = currentTool;
+        currentTool = 'pan';
+        editorEl.querySelectorAll('[data-tool]').forEach(b => {
+          b.classList.toggle('active', b.dataset.tool === currentTool);
+        });
+        updateCanvasCursor();
+      }
+
+      // Zoom shortcuts
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        zoomOut();
+      } else if (e.key === '0') {
+        e.preventDefault();
+        zoomReset();
+      }
+    }
+  }
+
+  /**
+   * Keyboard key up handler
+   */
+  function onEditorKeyUp(e) {
+    if (!editorEl) return;
+
+    // Release space bar - restore previous tool
+    if (e.key === ' ' && spaceHeld) {
+      e.preventDefault();
+      spaceHeld = false;
+      // Stop any panning in progress and prevent drawing from starting
+      isPanning = false;
+      isDrawing = false;
+      if (previousTool) {
+        currentTool = previousTool;
+        previousTool = null;
+        editorEl.querySelectorAll('[data-tool]').forEach(b => {
+          b.classList.toggle('active', b.dataset.tool === currentTool);
+        });
+        updateCanvasCursor();
+      }
+    }
+  }
+
+  /**
+   * Update canvas cursor based on current tool
+   */
+  function updateCanvasCursor() {
+    if (!canvas) return;
+    switch (currentTool) {
+      case 'pan':
+        canvas.style.cursor = 'grab';
+        break;
+      case 'text':
+        canvas.style.cursor = 'text';
+        break;
+      case 'crop':
+        canvas.style.cursor = 'crosshair';
+        break;
+      default:
+        canvas.style.cursor = 'crosshair';
     }
   }
 
@@ -1120,6 +1880,10 @@
         captureVisibleArea();
         break;
 
+      case 'COMMAND_CAPTURE_VISIBLE_TIMER':
+        captureVisibleWithTimer();
+        break;
+
       case 'COMMAND_CAPTURE_FULL_PAGE':
         captureWholePage();
         break;
@@ -1139,9 +1903,10 @@
   window.annotateProScreenshot = {
     startAreaSelection,
     captureVisibleArea,
+    captureVisibleWithTimer,
     captureWholePage,
     captureElement
   };
 
-  console.log('AnnotatePro: Screenshot editor initialized');
+  console.log('AnnotatePro: Screenshot Editor Initialized');
 })();

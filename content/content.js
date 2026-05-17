@@ -2460,8 +2460,153 @@
           updateBadgePosition(message.position);
         }
         break;
+
+      case 'COMMAND_GENERATE_QR':
+        const qrSelection = window.getSelection();
+        const qrText = qrSelection && !qrSelection.isCollapsed ? qrSelection.toString().trim() : '';
+        showQRCodeModal(qrText);
+        break;
     }
   });
+
+  // ============ QR Code Generator ============
+  // Uses qrcodejs library (loaded via manifest.json)
+
+  function showQRCodeModal(initialText = '') {
+    // Remove existing modal
+    const existing = document.querySelector('.annotatepro-qr-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.className = 'annotatepro-qr-modal';
+    modal.innerHTML = `
+      <div class="annotatepro-qr-content">
+        <div class="annotatepro-qr-header">
+          <h3>Generate QR Code</h3>
+          <button class="annotatepro-qr-close">&times;</button>
+        </div>
+        <div class="annotatepro-qr-body">
+          <label>Enter text or URL:</label>
+          <textarea class="annotatepro-qr-input" placeholder="https://example.com or any text...">${initialText}</textarea>
+          <div class="annotatepro-qr-preview"></div>
+        </div>
+        <div class="annotatepro-qr-footer">
+          <button class="annotatepro-qr-btn annotatepro-qr-copy">Copy to Clipboard</button>
+          <button class="annotatepro-qr-btn annotatepro-qr-download">Download PNG</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const input = modal.querySelector('.annotatepro-qr-input');
+    const preview = modal.querySelector('.annotatepro-qr-preview');
+    const closeBtn = modal.querySelector('.annotatepro-qr-close');
+    const copyBtn = modal.querySelector('.annotatepro-qr-copy');
+    const downloadBtn = modal.querySelector('.annotatepro-qr-download');
+
+    let qrCodeInstance = null;
+
+    function getCanvas() {
+      return preview.querySelector('canvas');
+    }
+
+    function updatePreview() {
+      const text = input.value.trim();
+      preview.innerHTML = '';
+
+      if (text) {
+        try {
+          // Create QR code using qrcodejs library
+          qrCodeInstance = new QRCode(preview, {
+            text: text,
+            width: 200,
+            height: 200,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+          });
+          copyBtn.disabled = false;
+          downloadBtn.disabled = false;
+        } catch (e) {
+          preview.innerHTML = '<p style="color: #ef4444;">Failed to generate QR code</p>';
+          qrCodeInstance = null;
+          copyBtn.disabled = true;
+          downloadBtn.disabled = true;
+        }
+      } else {
+        preview.innerHTML = '<p style="color: #888;">Enter text to generate QR code</p>';
+        qrCodeInstance = null;
+        copyBtn.disabled = true;
+        downloadBtn.disabled = true;
+      }
+    }
+
+    function closeModal() {
+      modal.remove();
+    }
+
+    // Debounce input to avoid too many regenerations
+    let debounceTimer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(updatePreview, 300);
+    });
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    // Create a new canvas with white padding around the QR code
+    function createPaddedCanvas(sourceCanvas, padding = 16) {
+      const paddedCanvas = document.createElement('canvas');
+      paddedCanvas.width = sourceCanvas.width + padding * 2;
+      paddedCanvas.height = sourceCanvas.height + padding * 2;
+      const ctx = paddedCanvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, paddedCanvas.width, paddedCanvas.height);
+      ctx.drawImage(sourceCanvas, padding, padding);
+      return paddedCanvas;
+    }
+
+    copyBtn.addEventListener('click', async () => {
+      const canvas = getCanvas();
+      if (!canvas) return;
+      try {
+        const paddedCanvas = createPaddedCanvas(canvas);
+        const blob = await new Promise(r => paddedCanvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => copyBtn.textContent = 'Copy to Clipboard', 2000);
+      } catch (e) {
+        console.error('Failed to copy QR code:', e);
+      }
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      const canvas = getCanvas();
+      if (!canvas) return;
+      const paddedCanvas = createPaddedCanvas(canvas);
+      const link = document.createElement('a');
+      link.download = `qrcode-${Date.now()}.png`;
+      link.href = paddedCanvas.toDataURL('image/png');
+      link.click();
+    });
+
+    document.addEventListener('keydown', function onEsc(e) {
+      if (e.key === 'Escape') {
+        closeModal();
+        document.removeEventListener('keydown', onEsc);
+      }
+    });
+
+    // Generate initial preview if text provided
+    if (initialText) {
+      updatePreview();
+    }
+    input.focus();
+  }
 
   function setupMutationObserver() {
     let pending = false;
