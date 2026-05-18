@@ -2466,6 +2466,7 @@
         const qrText = qrSelection && !qrSelection.isCollapsed ? qrSelection.toString().trim() : '';
         showQRCodeModal(qrText);
         break;
+
     }
   });
 

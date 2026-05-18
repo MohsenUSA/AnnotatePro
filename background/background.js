@@ -26,8 +26,344 @@ const MessageType = {
   GET_ALL_COLORS: 'GET_ALL_COLORS',
   GET_COLOR: 'GET_COLOR',
   UPDATE_COLOR: 'UPDATE_COLOR',
-  DELETE_COLOR: 'DELETE_COLOR'
+  DELETE_COLOR: 'DELETE_COLOR',
+  // Page-find operations (Firefox browser.find API — native, no DOM injection)
+  PAGE_FIND_QUERY: 'PAGE_FIND_QUERY',
+  PAGE_FIND_NEXT: 'PAGE_FIND_NEXT',
+  PAGE_FIND_PREV: 'PAGE_FIND_PREV',
+  PAGE_FIND_CLEAR: 'PAGE_FIND_CLEAR',
+  PAGE_FIND_GET_STATE: 'PAGE_FIND_GET_STATE',
+  // Link preview (OG metadata fetch + cache for clipboard URLs)
+  FETCH_LINK_PREVIEW: 'FETCH_LINK_PREVIEW'
 };
+
+// Link preview cache lives in browser.storage.local under LINK_PREVIEW_KEY.
+// Each entry: { title, description, image, domain, status, fetchedAt }.
+const LINK_PREVIEW_KEY = 'linkPreviewCache';
+const LINK_PREVIEW_OK_TTL = 30 * 24 * 60 * 60 * 1000;   // 30 days for successful fetches
+const LINK_PREVIEW_FAIL_TTL = 24 * 60 * 60 * 1000;      // 1 day for failures (retry sooner)
+const LINK_PREVIEW_PRUNE_AGE = 90 * 24 * 60 * 60 * 1000;
+const LINK_PREVIEW_BODY_LIMIT = 256 * 1024;             // head tags live in the first 256KB
+const LINK_PREVIEW_FETCH_TIMEOUT = 10000;
+
+async function getLinkPreviewCache() {
+  const out = await browser.storage.local.get(LINK_PREVIEW_KEY);
+  return out[LINK_PREVIEW_KEY] || {};
+}
+
+async function setLinkPreviewCache(cache) {
+  const now = Date.now();
+  for (const [k, v] of Object.entries(cache)) {
+    if (now - (v.fetchedAt || 0) > LINK_PREVIEW_PRUNE_AGE) delete cache[k];
+  }
+  await browser.storage.local.set({ [LINK_PREVIEW_KEY]: cache });
+}
+
+// X.com (Twitter) status URLs need special handling: the standard server-side
+// HTML they return contains a near-empty React shell with no OG metadata. We
+// instead use X-owned endpoints — the same ones X's own embed widget uses.
+const X_STATUS_RE = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/[^\/]+\/status(?:es)?\/(\d+)/i;
+
+function extractXStatusId(url) {
+  const m = url.match(X_STATUS_RE);
+  return m ? m[1] : null;
+}
+
+// Token formula reverse-engineered from X's embed widget. The endpoint accepts
+// any token-shaped string in practice, but matching the official formula gives
+// us forward-compat if X tightens validation.
+function computeSyndicationToken(id) {
+  return ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '');
+}
+
+function stripHtml(s) {
+  return (s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim();
+}
+
+async function fetchFromSyndication(id) {
+  const token = computeSyndicationToken(id);
+  const url = `https://cdn.syndication.twimg.com/tweet-result?id=${id}&lang=en&token=${token}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LINK_PREVIEW_FETCH_TIMEOUT);
+  try {
+    const resp = await fetch(url, { signal: ctrl.signal, credentials: 'omit' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const t = await resp.json();
+    if (!t || !t.user) return null;
+    const handle = t.user.screen_name ? `@${t.user.screen_name}` : '';
+    const title = [t.user.name, handle].filter(Boolean).join(' ');
+    const image =
+      t.mediaDetails?.[0]?.media_url_https ||
+      t.user.profile_image_url_https ||
+      null;
+    return {
+      title: title || null,
+      description: t.text || null,
+      image,
+      domain: 'x.com'
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchFromOEmbed(originalUrl) {
+  const url = `https://publish.twitter.com/oembed?url=${encodeURIComponent(originalUrl)}&omit_script=true`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LINK_PREVIEW_FETCH_TIMEOUT);
+  try {
+    const resp = await fetch(url, { signal: ctrl.signal, credentials: 'omit' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const o = await resp.json();
+    // oEmbed returns a <blockquote>...<p>tweet text</p>... <a>date</a></blockquote>.
+    // Extract just the <p> body for the description.
+    const pMatch = o.html?.match(/<p[^>]*>([\s\S]*?)<\/p>/);
+    const description = pMatch ? stripHtml(pMatch[1]) : null;
+    return {
+      title: o.author_name || null,
+      description,
+      image: null,
+      domain: 'x.com'
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchXPreview(originalUrl, id) {
+  // Primary: syndication endpoint (rich data, but undocumented and breaks
+  // occasionally when X tightens it).
+  try {
+    const r = await fetchFromSyndication(id);
+    if (r && (r.title || r.description)) {
+      console.log('[AnnotatePro] x preview ok via syndication:', originalUrl);
+      return r;
+    }
+  } catch (err) {
+    console.warn('[AnnotatePro] x syndication failed:', err?.message || err);
+  }
+  // Fallback: official oEmbed (text + author only, no thumbnail).
+  try {
+    const r = await fetchFromOEmbed(originalUrl);
+    if (r && (r.title || r.description)) {
+      console.log('[AnnotatePro] x preview ok via oembed:', originalUrl);
+      return r;
+    }
+  } catch (err) {
+    console.warn('[AnnotatePro] x oembed failed:', err?.message || err);
+  }
+  return null;
+}
+
+function parseLinkPreviewHtml(html, baseUrl) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const meta = (sel) => doc.querySelector(sel)?.getAttribute('content')?.trim() || null;
+  const title =
+    meta('meta[property="og:title"]') ||
+    meta('meta[name="twitter:title"]') ||
+    doc.querySelector('title')?.textContent?.trim() ||
+    null;
+  const description =
+    meta('meta[property="og:description"]') ||
+    meta('meta[name="twitter:description"]') ||
+    meta('meta[name="description"]') ||
+    null;
+  let image =
+    meta('meta[property="og:image"]') ||
+    meta('meta[property="og:image:url"]') ||
+    meta('meta[name="twitter:image"]') ||
+    meta('meta[name="twitter:image:src"]') ||
+    null;
+  if (image) {
+    try { image = new URL(image, baseUrl).href; } catch { image = null; }
+  }
+  return {
+    title: title ? title.slice(0, 300) : null,
+    description: description ? description.slice(0, 600) : null,
+    image,
+    domain: baseUrl.hostname
+  };
+}
+
+async function fetchLinkPreview(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+
+  const cache = await getLinkPreviewCache();
+  const cached = cache[url];
+  const now = Date.now();
+  if (cached) {
+    const ttl = cached.status === 'ok' ? LINK_PREVIEW_OK_TTL : LINK_PREVIEW_FAIL_TTL;
+    if (now - (cached.fetchedAt || 0) < ttl) {
+      console.log('[AnnotatePro] link preview cache hit:', url, cached.status);
+      return cached;
+    }
+  }
+
+  // x.com / twitter.com short-circuit: a generic fetch returns an empty React
+  // shell, so we use X's own embed-backing endpoints instead.
+  const xId = extractXStatusId(url);
+  if (xId) {
+    console.log('[AnnotatePro] link preview fetching (x.com path):', url);
+    let preview = await fetchXPreview(url, xId);
+    if (!preview) {
+      preview = { status: 'failed', error: 'all x endpoints failed', domain: 'x.com' };
+    } else {
+      preview.status = 'ok';
+    }
+    preview.fetchedAt = now;
+    cache[url] = preview;
+    await setLinkPreviewCache(cache);
+    return preview;
+  }
+
+  console.log('[AnnotatePro] link preview fetching:', url);
+  let preview;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LINK_PREVIEW_FETCH_TIMEOUT);
+  try {
+    const resp = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      credentials: 'omit',
+      headers: { 'Accept': 'text/html,application/xhtml+xml' }
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const contentType = resp.headers.get('content-type') || '';
+    if (!contentType.includes('html')) throw new Error(`not html (${contentType})`);
+
+    // Read only the first ~256KB — meta tags are in <head>, no need for the rest.
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8', { fatal: false });
+    let html = '';
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      html += decoder.decode(value, { stream: true });
+      if (total >= LINK_PREVIEW_BODY_LIMIT) {
+        try { await reader.cancel(); } catch (e) {}
+        break;
+      }
+    }
+    preview = parseLinkPreviewHtml(html, parsed);
+    preview.status = 'ok';
+    console.log('[AnnotatePro] link preview ok:', url, {
+      title: preview.title,
+      hasDesc: !!preview.description,
+      hasImage: !!preview.image
+    });
+  } catch (err) {
+    preview = { status: 'failed', error: String(err?.message || err), domain: parsed.hostname };
+    console.warn('[AnnotatePro] link preview failed:', url, preview.error);
+  } finally {
+    clearTimeout(timer);
+  }
+  preview.fetchedAt = now;
+  cache[url] = preview;
+  await setLinkPreviewCache(cache);
+  return preview;
+}
+
+// Per-tab find state. Keyed by tabId. Each entry: { query, count, index }
+// index === -1 means "all matches highlighted" (not navigated yet).
+const findState = new Map();
+
+function getFindState(tabId) {
+  return findState.get(tabId) || { query: '', count: 0, index: -1 };
+}
+
+async function updateFindBadge(tabId) {
+  const s = getFindState(tabId);
+  try {
+    if (!s.query || s.count === 0) {
+      const text = s.query ? '0' : '';
+      await browser.action.setBadgeText({ text, tabId });
+      if (s.query) {
+        await browser.action.setBadgeBackgroundColor({ color: '#dc2626', tabId });
+      }
+      return;
+    }
+    const text = s.index >= 0 ? `${s.index + 1}/${s.count}` : `${s.count}`;
+    await browser.action.setBadgeText({ text, tabId });
+    await browser.action.setBadgeBackgroundColor({ color: '#16a34a', tabId });
+  } catch (e) {
+    // Tab may have closed — ignore.
+  }
+}
+
+async function runFind(tabId, query) {
+  query = (query || '').trim();
+  if (!query) {
+    return clearFind(tabId);
+  }
+  try {
+    const result = await browser.find.find(query, { tabId, caseSensitive: false });
+    const count = result?.count || 0;
+    findState.set(tabId, { query, count, index: -1 });
+    if (count > 0) {
+      await browser.find.highlightResults({ tabId, noScroll: false });
+    } else {
+      await browser.find.removeHighlighting();
+    }
+    await updateFindBadge(tabId);
+    return { query, count, index: -1 };
+  } catch (e) {
+    console.error('AnnotatePro: browser.find.find failed', e);
+    return { query, count: 0, index: -1, error: e?.message };
+  }
+}
+
+async function navigateFind(tabId, direction) {
+  const s = getFindState(tabId);
+  if (!s.query || s.count === 0) return s;
+  // Re-run find before navigating in case the page state changed since last call.
+  // browser.find stores results globally per-tab; subsequent highlightResults calls
+  // use whatever was last found in that tab.
+  try {
+    const result = await browser.find.find(s.query, { tabId, caseSensitive: false });
+    const count = result?.count || 0;
+    if (count === 0) {
+      findState.set(tabId, { query: s.query, count: 0, index: -1 });
+      await browser.find.removeHighlighting();
+      await updateFindBadge(tabId);
+      return { query: s.query, count: 0, index: -1 };
+    }
+    let nextIndex;
+    if (s.index < 0) {
+      nextIndex = direction === 'prev' ? count - 1 : 0;
+    } else {
+      nextIndex = direction === 'prev'
+        ? (s.index - 1 + count) % count
+        : (s.index + 1) % count;
+    }
+    findState.set(tabId, { query: s.query, count, index: nextIndex });
+    // browser.find.highlightResults with rangeIndex paints ONLY that one
+    // range, so two calls are needed: first to scroll to the target match,
+    // then a no-arg call to re-paint every match. The second call uses
+    // noScroll so the scroll position from the first call is preserved.
+    await browser.find.highlightResults({ tabId, rangeIndex: nextIndex, noScroll: false });
+    await browser.find.highlightResults({ tabId, noScroll: true });
+    await updateFindBadge(tabId);
+    return { query: s.query, count, index: nextIndex };
+  } catch (e) {
+    console.error('AnnotatePro: navigateFind failed', e);
+    return s;
+  }
+}
+
+async function clearFind(tabId) {
+  findState.delete(tabId);
+  try {
+    await browser.find.removeHighlighting();
+  } catch (e) {
+    // Ignore — nothing was highlighted.
+  }
+  await updateFindBadge(tabId);
+  return { query: '', count: 0, index: -1 };
+}
 
 /**
  * Broadcast a message to all extension contexts (dashboard, popup, content scripts)
@@ -217,6 +553,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
               pageTitle: item.pageTitle,
               createdAt: item.timestamp,
               updatedAt: item.timestamp,
+              note: item.note || '',
               isClipboard: true
             }));
 
@@ -279,6 +616,41 @@ browser.runtime.onMessage.addListener((message, sender) => {
         return result;
       });
 
+    case MessageType.PAGE_FIND_QUERY:
+      return (async () => {
+        const tabId = payload?.tabId ?? sender?.tab?.id ?? (await browser.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+        if (!tabId) return { query: '', count: 0, index: -1 };
+        return runFind(tabId, payload?.query || '');
+      })();
+
+    case MessageType.PAGE_FIND_NEXT:
+      return (async () => {
+        const tabId = payload?.tabId ?? sender?.tab?.id ?? (await browser.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+        if (!tabId) return { query: '', count: 0, index: -1 };
+        return navigateFind(tabId, 'next');
+      })();
+
+    case MessageType.PAGE_FIND_PREV:
+      return (async () => {
+        const tabId = payload?.tabId ?? sender?.tab?.id ?? (await browser.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+        if (!tabId) return { query: '', count: 0, index: -1 };
+        return navigateFind(tabId, 'prev');
+      })();
+
+    case MessageType.PAGE_FIND_CLEAR:
+      return (async () => {
+        const tabId = payload?.tabId ?? sender?.tab?.id ?? (await browser.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+        if (!tabId) return { query: '', count: 0, index: -1 };
+        return clearFind(tabId);
+      })();
+
+    case MessageType.PAGE_FIND_GET_STATE:
+      return (async () => {
+        const tabId = payload?.tabId ?? sender?.tab?.id ?? (await browser.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+        if (!tabId) return { query: '', count: 0, index: -1 };
+        return getFindState(tabId);
+      })();
+
     case 'OPEN_DASHBOARD':
       browser.tabs.create({ url: browser.runtime.getURL('dashboard/dashboard.html') });
       return Promise.resolve();
@@ -299,6 +671,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
         checked: payload?.checked ?? message.checked
       });
       return Promise.resolve();
+
+    case MessageType.FETCH_LINK_PREVIEW:
+      return fetchLinkPreview(payload?.url);
 
     default:
       return Promise.reject(new Error(`Unknown message type: ${type}`));
@@ -358,6 +733,40 @@ async function createContextMenus() {
     parentId: 'annotatepro-parent',
     title: 'Highlight as...',
     contexts: ['selection']
+  });
+
+  // Find feature group — divider, find items, divider.
+  // Visibility of items within is managed dynamically by the onShown listener
+  // so the group only appears when relevant (text selected, or find active).
+  browser.contextMenus.create({
+    id: 'annotatepro-find-pre-separator',
+    parentId: 'annotatepro-parent',
+    type: 'separator',
+    contexts: ['all'],
+    visible: false
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-find-selection',
+    parentId: 'annotatepro-parent',
+    title: 'Find Selection on Page',
+    contexts: ['selection']
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-find-clear',
+    parentId: 'annotatepro-parent',
+    title: 'Find: Clear Highlights',
+    contexts: ['all'],
+    visible: false
+  });
+
+  browser.contextMenus.create({
+    id: 'annotatepro-find-post-separator',
+    parentId: 'annotatepro-parent',
+    type: 'separator',
+    contexts: ['all'],
+    visible: false
   });
 
   // Get colors from database and create menu items
@@ -523,6 +932,20 @@ async function createContextMenus() {
   });
 }
 
+// Show/hide the find-feature items as a single group right before the menu
+// opens. Keeps everything visually grouped without redundant separators.
+browser.contextMenus.onShown?.addListener((info, tab) => {
+  const hasSelection = info.contexts.includes('selection');
+  const findActive = tab?.id != null && findState.has(tab.id);
+  const groupVisible = hasSelection || findActive;
+
+  browser.contextMenus.update('annotatepro-find-pre-separator', { visible: groupVisible });
+  browser.contextMenus.update('annotatepro-find-post-separator', { visible: groupVisible });
+  browser.contextMenus.update('annotatepro-find-clear', { visible: findActive });
+
+  browser.contextMenus.refresh();
+});
+
 /**
  * Handle context menu clicks
  */
@@ -564,6 +987,11 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_VISIBLE_TIMER' });
   } else if (menuId === 'annotatepro-capture-fullpage') {
     browser.tabs.sendMessage(tab.id, { type: 'COMMAND_CAPTURE_FULL_PAGE' });
+  } else if (menuId === 'annotatepro-find-selection') {
+    const query = (info.selectionText || '').trim();
+    if (query) await runFind(tab.id, query);
+  } else if (menuId === 'annotatepro-find-clear') {
+    await clearFind(tab.id);
   }
 });
 
@@ -597,5 +1025,18 @@ browser.alarms?.create('keepalive', { periodInMinutes: 0.5 });
 browser.alarms?.onAlarm.addListener((alarm) => {
   if (alarm.name === 'keepalive') {
     // Just a heartbeat to keep the script alive
+  }
+});
+
+// Drop find state when a tab closes — prevents stale entries piling up.
+browser.tabs.onRemoved.addListener((tabId) => {
+  findState.delete(tabId);
+});
+
+// Clear find state when a tab navigates — browser.find results are scoped to
+// the prior document and become meaningless once the page changes.
+browser.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === 'loading' && findState.has(tabId)) {
+    clearFind(tabId);
   }
 });

@@ -526,19 +526,23 @@ body {
 .modal-close {
   width: 32px;
   height: 32px;
-  border: none;
-  background: #f0f0f0;
+  border: 2px solid #dc2626;
+  background: transparent;
   border-radius: 50%;
   font-size: 20px;
+  line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: #dc2626;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
 }
 
 .modal-close:hover {
-  background: #e0e0e0;
+  background: #dc2626;
+  color: white;
 }
 
 .modal-body {
@@ -585,6 +589,47 @@ body {
 .clipboard-content {
   flex: 1;
   min-width: 0;
+}
+
+.annotation-card-note-icon {
+  font-size: 14px;
+  line-height: 1;
+  margin-left: auto;
+  margin-right: 8px;
+  opacity: 0.85;
+}
+
+.clipboard-note-btn,
+.annotation-note-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0.35;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.clipboard-note-btn:hover,
+.annotation-note-btn:hover {
+  opacity: 1;
+  background: #f3f4f6;
+}
+
+.clipboard-note-btn.has-note,
+.annotation-note-btn.has-note {
+  opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .clipboard-note-btn:hover,
+  .annotation-note-btn:hover {
+    background: #3a3a3a;
+  }
 }
 
 .clipboard-text {
@@ -674,12 +719,6 @@ body {
 .annotation-time {
   font-size: 11px;
   color: #999;
-}
-
-.annotation-note-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-  margin-left: auto;
 }
 
 .annotation-delete {
@@ -847,8 +886,14 @@ body {
   }
 
   .modal-close {
-    background: #3a3a3a;
-    color: #888;
+    background: transparent;
+    color: #f87171;
+    border-color: #f87171;
+  }
+
+  .modal-close:hover {
+    background: #f87171;
+    color: #1a1a1a;
   }
 
   .annotation-item,
@@ -1203,12 +1248,14 @@ body {
 }
 
 .annotation-detail-header .modal-close {
-  background: rgba(255, 255, 255, 0.2) !important;
-  color: white !important;
+  background: transparent !important;
+  color: #fecaca !important;
+  border: 2px solid #fecaca !important;
 }
 
 .annotation-detail-header .modal-close:hover {
-  background: rgba(255, 255, 255, 0.3) !important;
+  background: #fecaca !important;
+  color: #7f1d1d !important;
 }
 
 .annotation-detail-modal .detail-section h3 {
@@ -1685,6 +1732,58 @@ body {
   background: #bae6fd;
 }
 
+.annotation-card-view {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #f3f4f6;
+  color: #374151;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.annotation-card-view:hover {
+  background: #e5e7eb;
+}
+
+.annotation-card-main-text-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.card-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.3;
+}
+
+.card-preview-desc {
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  .card-preview-title {
+    color: #f3f4f6;
+  }
+  .card-preview-desc {
+    color: #c5c8cd;
+  }
+}
+
+
 /* ============ Dark Mode for Search/Filters ============ */
 @media (prefers-color-scheme: dark) {
   .filters-bar {
@@ -1803,6 +1902,15 @@ body {
 
   .annotation-card-copy:hover {
     background: #1d4ed8;
+  }
+
+  .annotation-card-view {
+    background: #3a3a3a;
+    color: #d4d4d4;
+  }
+
+  .annotation-card-view:hover {
+    background: #4a4a4a;
   }
 
   /* Color management modal - dark mode */
@@ -1998,4 +2106,219 @@ body {
 
 .modal-done-btn:hover {
   background: #4f46e5;
+}
+
+/* Toolbar toggle (link previews on/off) */
+.toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  padding: 0 4px;
+}
+
+.toolbar-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.toolbar-toggle-track {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+  background: #d0d0d0;
+  border-radius: 999px;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.toolbar-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+
+.toolbar-toggle input:checked + .toolbar-toggle-track {
+  background: #6366f1;
+}
+
+.toolbar-toggle input:checked + .toolbar-toggle-track .toolbar-toggle-thumb {
+  transform: translateX(14px);
+}
+
+.toolbar-toggle input:focus-visible + .toolbar-toggle-track {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+.toolbar-toggle-label {
+  font-size: 13px;
+  color: #444;
+  font-weight: 500;
+}
+
+/* Clipboard link + preview card */
+.clipboard-item-link {
+  align-items: flex-start;
+}
+
+.clipboard-link {
+  display: inline-block;
+  font-size: 13px;
+  color: #4f46e5;
+  text-decoration: none;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.clipboard-link:hover {
+  text-decoration: underline;
+}
+
+.clipboard-preview {
+  display: flex;
+  gap: 10px;
+  margin: 6px 0 6px 0;
+  padding: 10px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.clipboard-preview-loading {
+  min-height: 56px;
+  align-items: center;
+}
+
+.clipboard-preview-failed {
+  padding: 6px 10px;
+  background: #f9fafb;
+  border-style: dashed;
+}
+
+.clipboard-preview-empty {
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.clipboard-preview-skeleton {
+  width: 100%;
+  height: 36px;
+  background: linear-gradient(90deg, #f0f0f0 0%, #e0e0e0 50%, #f0f0f0 100%);
+  background-size: 200% 100%;
+  border-radius: 4px;
+  animation: clipboard-preview-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes clipboard-preview-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.clipboard-preview-image {
+  flex-shrink: 0;
+  width: 72px;
+  height: 72px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f3f4f6;
+}
+
+.clipboard-preview-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.clipboard-preview-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+}
+
+.clipboard-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.clipboard-preview-desc {
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.clipboard-preview-domain {
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: lowercase;
+}
+
+@media (prefers-color-scheme: dark) {
+  .toolbar-toggle-track {
+    background: #3a3a3a;
+  }
+  .toolbar-toggle-label {
+    color: #cfcfcf;
+  }
+  .clipboard-link {
+    color: #a5b4fc;
+  }
+  .clipboard-preview {
+    background: #2a2a2a;
+    border-color: #3a3a3a;
+  }
+  .clipboard-preview-image {
+    background: #1f1f1f;
+  }
+  .clipboard-preview-title {
+    color: #f3f4f6;
+  }
+  .clipboard-preview-desc {
+    color: #c5c8cd;
+  }
+  .clipboard-preview-domain {
+    color: #9ca3af;
+  }
+  .clipboard-preview-skeleton {
+    background: linear-gradient(90deg, #2f2f2f 0%, #3a3a3a 50%, #2f2f2f 100%);
+    background-size: 200% 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .toolbar-toggle-label {
+    display: none;
+  }
+  .clipboard-preview-image {
+    width: 56px;
+    height: 56px;
+  }
 }

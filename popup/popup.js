@@ -10,7 +10,12 @@ const MessageType = {
   GET_ALL_ANNOTATIONS: 'GET_ALL_ANNOTATIONS',
   GET_ANNOTATION_COUNT: 'GET_ANNOTATION_COUNT',
   CLEAR_PAGE_ANNOTATIONS: 'CLEAR_PAGE_ANNOTATIONS',
-  GET_ALL_COLORS: 'GET_ALL_COLORS'
+  GET_ALL_COLORS: 'GET_ALL_COLORS',
+  PAGE_FIND_QUERY: 'PAGE_FIND_QUERY',
+  PAGE_FIND_NEXT: 'PAGE_FIND_NEXT',
+  PAGE_FIND_PREV: 'PAGE_FIND_PREV',
+  PAGE_FIND_CLEAR: 'PAGE_FIND_CLEAR',
+  PAGE_FIND_GET_STATE: 'PAGE_FIND_GET_STATE'
 };
 
 // Legacy intent colors for backwards compatibility
@@ -848,6 +853,58 @@ function escapeHtml(text) {
 /**
  * Initialize popup
  */
+let findDebounceTimer = null;
+let lastFindQuery = '';
+
+function renderFindState(state) {
+  const input = document.getElementById('find-input');
+  const count = document.getElementById('find-count');
+  const prevBtn = document.getElementById('btn-find-prev');
+  const nextBtn = document.getElementById('btn-find-next');
+  const clearBtn = document.getElementById('btn-find-clear');
+  if (!input || !count) return;
+
+  const s = state || { query: '', count: 0, index: -1 };
+  if (s.query && input.value !== s.query) {
+    input.value = s.query;
+  }
+  lastFindQuery = s.query || '';
+
+  count.classList.remove('no-match', 'has-match');
+  if (!s.query) {
+    count.textContent = '';
+  } else if (s.count === 0) {
+    count.textContent = '0 / 0';
+    count.classList.add('no-match');
+  } else if (s.index < 0) {
+    count.textContent = `${s.count} match${s.count === 1 ? '' : 'es'}`;
+    count.classList.add('has-match');
+  } else {
+    count.textContent = `${s.index + 1} / ${s.count}`;
+    count.classList.add('has-match');
+  }
+
+  const navEnabled = s.count > 0;
+  prevBtn.disabled = !navEnabled;
+  nextBtn.disabled = !navEnabled;
+  clearBtn.disabled = !s.query;
+}
+
+async function sendFindMessage(type, payload = {}) {
+  try {
+    const tabId = currentTab?.id;
+    return await browser.runtime.sendMessage({ type, payload: { ...payload, tabId } });
+  } catch (e) {
+    console.error('AnnotatePro: find message failed', type, e);
+    return null;
+  }
+}
+
+async function refreshFindState() {
+  const state = await sendFindMessage(MessageType.PAGE_FIND_GET_STATE);
+  renderFindState(state);
+}
+
 function init() {
   // Attach event listeners IMMEDIATELY so popup is interactive right away
 
@@ -943,6 +1000,58 @@ function init() {
     }
   });
 
+  // Find on Page wiring
+  const findInput = document.getElementById('find-input');
+  if (findInput) {
+    findInput.addEventListener('input', () => {
+      clearTimeout(findDebounceTimer);
+      const query = findInput.value;
+      findDebounceTimer = setTimeout(async () => {
+        if (query === lastFindQuery) return;
+        const state = await sendFindMessage(MessageType.PAGE_FIND_QUERY, { query });
+        renderFindState(state);
+      }, 150);
+    });
+
+    findInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        clearTimeout(findDebounceTimer);
+        if (findInput.value !== lastFindQuery) {
+          const state = await sendFindMessage(MessageType.PAGE_FIND_QUERY, { query: findInput.value });
+          renderFindState(state);
+        } else {
+          const state = await sendFindMessage(
+            e.shiftKey ? MessageType.PAGE_FIND_PREV : MessageType.PAGE_FIND_NEXT
+          );
+          renderFindState(state);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        findInput.value = '';
+        const state = await sendFindMessage(MessageType.PAGE_FIND_CLEAR);
+        renderFindState(state);
+      }
+    });
+  }
+
+  document.getElementById('btn-find-prev')?.addEventListener('click', async () => {
+    const state = await sendFindMessage(MessageType.PAGE_FIND_PREV);
+    renderFindState(state);
+  });
+
+  document.getElementById('btn-find-next')?.addEventListener('click', async () => {
+    const state = await sendFindMessage(MessageType.PAGE_FIND_NEXT);
+    renderFindState(state);
+  });
+
+  document.getElementById('btn-find-clear')?.addEventListener('click', async () => {
+    const input = document.getElementById('find-input');
+    if (input) input.value = '';
+    const state = await sendFindMessage(MessageType.PAGE_FIND_CLEAR);
+    renderFindState(state);
+  });
+
   // Load data asynchronously (non-blocking)
   loadPopupData();
 }
@@ -1019,7 +1128,8 @@ async function loadPopupData() {
       await Promise.all([
         loadAnnotations(),
         checkSelection(),
-        loadClipboardHistory()
+        loadClipboardHistory(),
+        refreshFindState()
       ]);
     } else {
       // Show message for inaccessible pages

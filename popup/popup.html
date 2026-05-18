@@ -30,6 +30,19 @@
       <span class="badge" id="count">0</span>
     </header>
 
+    <section class="section" id="section-find">
+      <h2 class="section-title">Find on Page</h2>
+      <div class="find-row">
+        <input type="text" id="find-input" class="find-input" placeholder="Search this page..." autocomplete="off" spellcheck="false" />
+        <span id="find-count" class="find-count"></span>
+      </div>
+      <div class="find-actions">
+        <button class="btn btn-secondary find-btn" id="btn-find-prev" title="Previous match" disabled>Prev</button>
+        <button class="btn btn-secondary find-btn" id="btn-find-next" title="Next match" disabled>Next</button>
+        <button class="btn btn-secondary find-btn" id="btn-find-clear" title="Clear find highlights" disabled>Clear</button>
+      </div>
+    </section>
+
     <section class="section">
       <h2 class="section-title">This Page</h2>
       <div class="stats" id="page-stats">

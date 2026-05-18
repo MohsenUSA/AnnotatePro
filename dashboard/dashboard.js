@@ -14,6 +14,21 @@
   let activeFilters = { types: [], colorIds: [], dateRange: null };
   let searchDebounceTimer = null;
   let cachedColors = [];
+  let linkPreviewsEnabled = true;
+
+  const SETTINGS_KEY = 'settings';
+  const DEFAULT_SETTINGS = { loadLinkPreviews: true };
+
+  // When the dashboard itself writes to clipboardHistory (note save, delete),
+  // we bump this so the storage.onChanged listener can skip the next refresh.
+  // Prevents a flash under the open modal during note auto-save.
+  let expectedSelfWrites = 0;
+  function markSelfWrite() {
+    expectedSelfWrites++;
+    // Safety: if onChanged never fires, drop the marker so the next external
+    // change still triggers a refresh.
+    setTimeout(() => { if (expectedSelfWrites > 0) expectedSelfWrites--; }, 2000);
+  }
 
   // Legacy intent names for backwards compatibility
   const INTENT_NAMES = {
@@ -172,6 +187,52 @@
   }
 
   /**
+   * Return the URL string if `text` is exactly an http(s) URL, else null.
+   */
+  function extractUrl(text) {
+    const trimmed = (text || '').trim();
+    if (!trimmed || /\s/.test(trimmed)) return null;
+    try {
+      const u = new URL(trimmed);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return trimmed;
+    } catch {}
+    return null;
+  }
+
+  async function loadSettings() {
+    const out = await browser.storage.local.get(SETTINGS_KEY);
+    return { ...DEFAULT_SETTINGS, ...(out[SETTINGS_KEY] || {}) };
+  }
+
+  async function saveSettings(patch) {
+    const current = await loadSettings();
+    const next = { ...current, ...patch };
+    await browser.storage.local.set({ [SETTINGS_KEY]: next });
+    return next;
+  }
+
+  // Full refresh — re-fetch pages from background and re-render whichever
+  // view is active. Called on annotation events and on external clipboard
+  // changes (via storage.onChanged).
+  async function refreshDashboard() {
+    try {
+      await loadPages();
+      updateStorageInfo();
+      if (activeView !== 'pages') {
+        performSearch();
+      }
+    } catch (e) {
+      console.error('[AnnotatePro] refresh failed:', e);
+    }
+  }
+
+  let clipboardRefreshTimer;
+  function scheduleClipboardRefresh() {
+    clearTimeout(clipboardRefreshTimer);
+    clipboardRefreshTimer = setTimeout(refreshDashboard, 600);
+  }
+
+  /**
    * Truncate text with ellipsis
    */
   function truncate(text, maxLength) {
@@ -295,7 +356,7 @@
                     <p class="annotation-text">${escapeHtml(truncate(a.annotationType === 'page-note' ? 'Page Note' : (a.textSnapshot || '(element)'), 100))}</p>
                     <span class="annotation-time">${formatRelativeTime(a.updatedAt)}</span>
                   </div>
-                  ${a.note && a.note.trim() ? '<span class="annotation-note-icon" title="Has note">📝</span>' : ''}
+                  <button class="annotation-note-btn${a.note && a.note.trim() ? ' has-note' : ''}" data-id="${a.id}" title="${a.note && a.note.trim() ? 'View / edit note' : 'Add a note'}">📝</button>
                   <button class="annotation-delete" title="Delete">&times;</button>
                 </div>
               `).join('')}
@@ -306,17 +367,32 @@
           <div class="modal-section">
             <h3 class="modal-section-title">Clipboard History</h3>
             <div class="clipboard-list">
-              ${clipboardItems.map((item, index) => `
-                <div class="clipboard-item" data-index="${index}">
-                  <div class="annotation-type-badge">📋</div>
+              ${clipboardItems.map((item, index) => {
+                const url = extractUrl(item.text);
+                const showPreview = url && linkPreviewsEnabled;
+                const hasNote = item.note && item.note.trim();
+                return `
+                <div class="clipboard-item${url ? ' clipboard-item-link' : ''}" data-index="${index}">
+                  <div class="annotation-type-badge">${url ? '🔗' : '📋'}</div>
                   <div class="clipboard-content">
-                    <p class="clipboard-text">${escapeHtml(truncate(item.text, 100))}</p>
+                    ${url
+                      ? `<a class="clipboard-link" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(truncate(url, 100))}</a>`
+                      : `<p class="clipboard-text">${escapeHtml(truncate(item.text, 100))}</p>`
+                    }
+                    ${showPreview
+                      ? `<div class="clipboard-preview clipboard-preview-loading" data-url="${escapeAttr(url)}">
+                          <div class="clipboard-preview-skeleton"></div>
+                        </div>`
+                      : ''
+                    }
                     <span class="annotation-time">${formatRelativeTime(item.timestamp)}</span>
                   </div>
+                  <button class="clipboard-note-btn${hasNote ? ' has-note' : ''}" data-index="${index}" title="${hasNote ? 'View / edit note' : 'Add a note'}">📝</button>
                   <button class="clipboard-copy" title="Copy to clipboard">Copy</button>
                   <button class="clipboard-delete" title="Delete">&times;</button>
                 </div>
-              `).join('')}
+              `;
+              }).join('')}
             </div>
           </div>
           ` : ''}
@@ -392,6 +468,26 @@
       });
     });
 
+    // Note icon opens the single-item detail modal (with full note editor)
+    modal.querySelectorAll('.clipboard-note-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const index = parseInt(btn.dataset.index, 10);
+        const clipboardItem = clipboardItems[index];
+        if (clipboardItem) showClipboardItemDetail(clipboardItem);
+      });
+    });
+
+    // Annotation note icon opens the annotation detail modal
+    modal.querySelectorAll('.annotation-note-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const annotation = sortedAnnotations.find(a => a.id === id);
+        if (annotation) showAnnotationDetail(annotation);
+      });
+    });
+
     // Copy clipboard item
     modal.querySelectorAll('.clipboard-copy').forEach(btn => {
       btn.addEventListener('click', async (e) => {
@@ -450,6 +546,250 @@
     });
 
     document.body.appendChild(modal);
+
+    // Kick off link preview fetches for clipboard URLs (no-op if disabled).
+    hydrateLinkPreviews(modal);
+  }
+
+  /**
+   * Show a single clipboard item in its own modal — same layout as the page
+   * modal, but scoped to one item so the user can see just the link they
+   * clicked rather than every clipboard item on that page.
+   */
+  function showClipboardItemDetail(item) {
+    const url = extractUrl(item.text);
+    const showPreview = url && linkPreviewsEnabled;
+    const headerTitle = item.pageTitle || (url ? getDomain(url) : 'Clipboard Item');
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h2>${escapeHtml(truncate(headerTitle, 60))}</h2>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-section">
+            <h3 class="modal-section-title">Clipboard History</h3>
+            <div class="clipboard-list">
+              <div class="clipboard-item${url ? ' clipboard-item-link' : ''}">
+                <div class="annotation-type-badge">${url ? '🔗' : '📋'}</div>
+                <div class="clipboard-content">
+                  ${url
+                    ? `<a class="clipboard-link" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(truncate(url, 100))}</a>`
+                    : `<p class="clipboard-text">${escapeHtml(truncate(item.text, 200))}</p>`
+                  }
+                  ${showPreview
+                    ? `<div class="clipboard-preview clipboard-preview-loading" data-url="${escapeAttr(url)}">
+                        <div class="clipboard-preview-skeleton"></div>
+                      </div>`
+                    : ''
+                  }
+                  <span class="annotation-time">${formatRelativeTime(item.timestamp)}</span>
+                </div>
+                <button class="clipboard-copy" title="Copy to clipboard">Copy</button>
+                <button class="clipboard-delete" title="Delete">&times;</button>
+              </div>
+            </div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-section-header">
+              <h3>NOTE</h3>
+              <span class="note-edit-status"></span>
+            </div>
+            <div class="note-input-wrapper">
+              <button class="copy-btn note-copy-btn" title="Copy note to clipboard">Copy</button>
+              <div class="note-toolbar">
+                <button class="note-toolbar-btn" data-action="bullet" title="Add bullet point">•</button>
+                <button class="note-toolbar-btn" data-action="checkbox" title="Add checkbox">☐</button>
+              </div>
+              <textarea class="detail-note-textarea"
+                        placeholder="Add a note to this clipboard item..."
+                        autocapitalize="sentences"
+                        rows="4">${escapeHtml(item.note || '')}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    modal.querySelector('.modal-close').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+
+    modal.querySelector('.clipboard-copy').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      try {
+        await navigator.clipboard.writeText(item.text);
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    });
+
+    modal.querySelector('.clipboard-delete').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete this clipboard item?')) return;
+      try {
+        const { clipboardHistory = [] } = await browser.storage.local.get('clipboardHistory');
+        const newHistory = clipboardHistory.filter(h =>
+          !(h.text === item.text && h.timestamp === item.timestamp && h.pageUrl === item.pageUrl)
+        );
+        await browser.storage.local.set({ clipboardHistory: newHistory });
+        modal.remove();
+        // Refresh whichever view is showing
+        if (typeof performSearch === 'function' && searchResults.length) performSearch();
+        loadPages();
+      } catch (err) {
+        console.error('Failed to delete clipboard item:', err);
+      }
+    });
+
+    // Note section — reuses the same UI (toolbar, copy, autocapitalize) as
+    // annotation notes. Save target is browser.storage.local clipboardHistory
+    // since clipboard items aren't stored in the annotation DB.
+    const noteTextarea = modal.querySelector('.detail-note-textarea');
+    const noteStatus = modal.querySelector('.note-edit-status');
+    const noteCopyBtn = modal.querySelector('.note-copy-btn');
+
+    setupAutoCapitalize(noteTextarea);
+
+    modal.querySelectorAll('.note-toolbar-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        insertNoteFormat(noteTextarea, btn.dataset.action);
+        noteTextarea.focus();
+      });
+    });
+
+    noteCopyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(noteTextarea.value);
+        noteCopyBtn.textContent = 'Copied!';
+        setTimeout(() => { noteCopyBtn.textContent = 'Copy'; }, 1500);
+      } catch (err) {
+        console.error('Failed to copy note:', err);
+      }
+    });
+
+    let noteSaveTimer;
+    async function persistClipboardNote(value) {
+      const { clipboardHistory = [] } = await browser.storage.local.get('clipboardHistory');
+      let touched = false;
+      const newHistory = clipboardHistory.map(h => {
+        if (h.text === item.text && h.timestamp === item.timestamp && h.pageUrl === item.pageUrl) {
+          touched = true;
+          return { ...h, note: value };
+        }
+        return h;
+      });
+      if (!touched) {
+        // Fallback: text + timestamp alone (in case pageUrl drifted).
+        const newHistory2 = clipboardHistory.map(h => {
+          if (h.text === item.text && h.timestamp === item.timestamp) {
+            touched = true;
+            return { ...h, note: value };
+          }
+          return h;
+        });
+        if (touched) {
+          markSelfWrite();
+          await browser.storage.local.set({ clipboardHistory: newHistory2 });
+          item.note = value;
+          console.log('[AnnotatePro] clipboard note saved (relaxed match)');
+          return 'ok';
+        }
+        console.warn('[AnnotatePro] clipboard note save: no matching entry', {
+          text: item.text, timestamp: item.timestamp, pageUrl: item.pageUrl
+        });
+        return 'not-found';
+      }
+      markSelfWrite();
+      await browser.storage.local.set({ clipboardHistory: newHistory });
+      item.note = value;
+      console.log('[AnnotatePro] clipboard note saved');
+      return 'ok';
+    }
+
+    noteTextarea.addEventListener('input', () => {
+      noteStatus.textContent = 'Saving...';
+      noteStatus.className = 'note-edit-status saving';
+      clearTimeout(noteSaveTimer);
+      noteSaveTimer = setTimeout(async () => {
+        try {
+          const result = await persistClipboardNote(noteTextarea.value);
+          if (result === 'ok') {
+            noteStatus.textContent = 'Saved';
+            noteStatus.className = 'note-edit-status saved';
+            setTimeout(() => { noteStatus.textContent = ''; }, 1500);
+          } else {
+            noteStatus.textContent = 'Item not found';
+            noteStatus.className = 'note-edit-status error';
+          }
+        } catch (err) {
+          console.error('[AnnotatePro] failed to save clipboard note:', err);
+          noteStatus.textContent = 'Save failed';
+          noteStatus.className = 'note-edit-status error';
+        }
+      }, 500);
+    });
+
+    document.body.appendChild(modal);
+    hydrateLinkPreviews(modal);
+  }
+
+  /**
+   * Fetch OG metadata for any clipboard items that contain a URL and render
+   * the result into the placeholder. Sequential to avoid hammering origins.
+   */
+  async function hydrateLinkPreviews(root) {
+    const placeholders = root.querySelectorAll('.clipboard-preview[data-url]');
+    for (const placeholder of placeholders) {
+      const url = placeholder.dataset.url;
+      try {
+        const preview = await sendMessage('FETCH_LINK_PREVIEW', { url });
+        renderLinkPreview(placeholder, url, preview);
+      } catch (err) {
+        renderLinkPreview(placeholder, url, { status: 'failed' });
+      }
+    }
+  }
+
+  function renderLinkPreview(el, url, preview) {
+    el.classList.remove('clipboard-preview-loading');
+
+    if (!preview || preview.status !== 'ok') {
+      const reason = preview?.error || 'no response from background';
+      console.warn('[AnnotatePro] link preview failed for', url, '—', reason);
+      el.classList.add('clipboard-preview-failed');
+      el.innerHTML = `<span class="clipboard-preview-empty">Preview unavailable (${escapeHtml(getDomain(url))})</span>`;
+      return;
+    }
+    const { title, description, image, domain } = preview;
+    if (!title && !description && !image) {
+      console.warn('[AnnotatePro] link preview empty for', url, '— site returned no OG/Twitter/title metadata');
+      el.classList.add('clipboard-preview-failed');
+      el.innerHTML = `<span class="clipboard-preview-empty">No preview metadata (${escapeHtml(domain || getDomain(url))})</span>`;
+      return;
+    }
+    el.classList.add('clipboard-preview-loaded');
+    el.innerHTML = `
+      ${image ? `<div class="clipboard-preview-image"><img src="${escapeAttr(image)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></div>` : ''}
+      <div class="clipboard-preview-body">
+        ${title ? `<div class="clipboard-preview-title">${escapeHtml(truncate(title, 120))}</div>` : ''}
+        ${description ? `<div class="clipboard-preview-desc">${escapeHtml(truncate(description, 200))}</div>` : ''}
+        <div class="clipboard-preview-domain">${escapeHtml(domain || getDomain(url))}</div>
+      </div>
+    `;
+    const img = el.querySelector('.clipboard-preview-image img');
+    if (img) {
+      img.addEventListener('error', () => {
+        const slot = el.querySelector('.clipboard-preview-image');
+        if (slot) slot.remove();
+      }, { once: true });
+    }
   }
 
   /**
@@ -774,21 +1114,16 @@
       }, 500);
     });
 
-    // Update note icon in list and close modal
+    // Update note icon in list and close modal — button is always present
+    // in the list now, so just toggle has-note rather than insert a span.
     const closeDetailModal = () => {
-      // Update note icon in the annotation list
       const listItem = document.querySelector(`.annotation-item[data-id="${annotation.id}"]`);
       if (listItem) {
-        let noteIcon = listItem.querySelector('.annotation-note-icon');
-        const hasNote = annotation.note && annotation.note.trim();
-        if (hasNote && !noteIcon) {
-          noteIcon = document.createElement('span');
-          noteIcon.className = 'annotation-note-icon';
-          noteIcon.title = 'Has note';
-          noteIcon.textContent = '📝';
-          listItem.querySelector('.annotation-delete').before(noteIcon);
-        } else if (!hasNote && noteIcon) {
-          noteIcon.remove();
+        const noteBtn = listItem.querySelector('.annotation-note-btn');
+        if (noteBtn) {
+          const hasNote = annotation.note && annotation.note.trim();
+          noteBtn.classList.toggle('has-note', !!hasNote);
+          noteBtn.title = hasNote ? 'View / edit note' : 'Add a note';
         }
       }
       detailModal.remove();
@@ -876,6 +1211,13 @@
         query: searchQuery,
         options
       });
+      // Apply the 'has-note' pseudo-filter client-side: keep only items with a
+      // non-empty note, excluding page-notes (which have their own filter).
+      if (activeFilters.types.includes('has-note')) {
+        searchResults = searchResults.filter(a =>
+          a.annotationType !== 'page-note' && a.note && a.note.trim()
+        );
+      }
       renderSearchResults();
     } catch (error) {
       console.error('Search failed:', error);
@@ -883,13 +1225,16 @@
   }
 
   /**
-   * Build filter options object from activeFilters
+   * Build filter options object from activeFilters. The 'has-note' pseudo-type
+   * is a client-side constraint, not a real annotation type, so it's stripped
+   * before sending to the backend and re-applied after results return.
    */
   function buildFilterOptions() {
     const options = {};
 
-    if (activeFilters.types.length > 0) {
-      options.types = activeFilters.types;
+    const realTypes = activeFilters.types.filter(t => t !== 'has-note');
+    if (realTypes.length > 0) {
+      options.types = realTypes;
     }
 
     if (activeFilters.colorIds.length > 0) {
@@ -1003,6 +1348,35 @@
       const card = createAnnotationCard(annotation);
       resultsContainer.appendChild(card);
     }
+
+    // Replace bare URLs on clipboard cards with their post summary
+    hydrateStandaloneClipboardPreviews(resultsContainer);
+  }
+
+  /**
+   * For each standalone clipboard card whose text is a URL, fetch the cached
+   * preview and replace the URL with a title + summary so the card reads as
+   * "Elon Musk @elonmusk — tweet text" rather than a bare URL.
+   */
+  async function hydrateStandaloneClipboardPreviews(root) {
+    if (!linkPreviewsEnabled) return;
+    const targets = root.querySelectorAll('.annotation-card-main-text[data-preview-url]');
+    for (const el of targets) {
+      const url = el.dataset.previewUrl;
+      try {
+        const preview = await sendMessage('FETCH_LINK_PREVIEW', { url });
+        if (preview?.status === 'ok' && (preview.title || preview.description)) {
+          el.classList.add('annotation-card-main-text-preview');
+          el.innerHTML = `
+            ${preview.title ? `<strong class="card-preview-title">${escapeHtml(truncate(preview.title, 100))}</strong>` : ''}
+            ${preview.description ? `<span class="card-preview-desc">${escapeHtml(truncate(preview.description, 220))}</span>` : ''}
+          `;
+          delete el.dataset.previewUrl;
+        }
+      } catch (err) {
+        // Leave URL as-is on failure
+      }
+    }
   }
 
   /**
@@ -1044,17 +1418,25 @@
       ? (searchQuery ? highlightMatch(truncate(annotation.note, 100), searchQuery) : escapeHtml(truncate(annotation.note, 100)))
       : '';
 
+    const clipboardUrl = isClipboard ? extractUrl(annotation.textSnapshot) : null;
+    const previewAttr = (clipboardUrl && linkPreviewsEnabled)
+      ? ` data-preview-url="${escapeAttr(clipboardUrl)}"`
+      : '';
+
+    const hasNote = annotation.note && annotation.note.trim();
+
     card.innerHTML = `
       <div class="annotation-card-header">
         <span class="annotation-card-type ${annotation.annotationType}">
           ${typeLabel}${colorLabel}
         </span>
+        ${hasNote ? '<span class="annotation-card-note-icon" title="Has note">📝</span>' : ''}
         <span class="annotation-card-time">${formatRelativeTime(annotation.updatedAt)}</span>
       </div>
       <div class="annotation-card-content">
         ${isCheckbox ? `<input type="checkbox" class="annotation-card-checkbox" ${annotation.checked ? 'checked' : ''}>` : ''}
         <div class="annotation-card-text">
-          <p class="annotation-card-main-text">${displayText}</p>
+          <p class="annotation-card-main-text"${previewAttr}>${displayText}</p>
           ${noteText ? `<p class="annotation-card-note">Note: ${noteText}</p>` : ''}
         </div>
       </div>
@@ -1062,6 +1444,7 @@
         <a href="${escapeHtml(annotation.pageUrl)}" class="annotation-card-source" title="${escapeHtml(annotation.pageTitle || annotation.pageUrl)}">
           ${escapeHtml(truncate(annotation.pageTitle || getDomain(annotation.pageUrl), 40))}
         </a>
+        ${isClipboard ? `<button class="annotation-card-view" title="View in page">View</button>` : ''}
         ${isClipboard ? `<button class="annotation-card-copy" title="Copy">Copy</button>` : ''}
         <button class="annotation-card-delete" title="Delete">&times;</button>
       </div>
@@ -1077,6 +1460,22 @@
           patch: { checked: checkbox.checked }
         });
         annotation.checked = checkbox.checked;
+      });
+    }
+
+    // View handler for clipboard items — opens a focused modal showing only
+    // the clicked item (with its link preview), not every item on the page.
+    const viewBtn = card.querySelector('.annotation-card-view');
+    if (viewBtn) {
+      viewBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showClipboardItemDetail({
+          text: annotation.textSnapshot,
+          timestamp: annotation.createdAt,
+          pageUrl: annotation.pageUrl,
+          pageTitle: annotation.pageTitle,
+          note: annotation.note || ''
+        });
       });
     }
 
@@ -1117,16 +1516,30 @@
       performSearch(); // Refresh results
     });
 
-    // Click card to view detail (skip for clipboard items)
+    // Click card to view detail. Skip when the click landed on an action
+    // button, the source link, or an anchor inside the card (e.g. hydrated
+    // link previews and clipboard URL links should open the link, not the
+    // modal).
     card.addEventListener('click', (e) => {
       if (e.target.closest('.annotation-card-checkbox') ||
           e.target.closest('.annotation-card-delete') ||
           e.target.closest('.annotation-card-copy') ||
-          e.target.closest('.annotation-card-source')) return;
-      if (!isClipboard) {
+          e.target.closest('.annotation-card-view') ||
+          e.target.closest('.annotation-card-source') ||
+          e.target.closest('a')) return;
+      if (isClipboard) {
+        showClipboardItemDetail({
+          text: annotation.textSnapshot,
+          timestamp: annotation.createdAt,
+          pageUrl: annotation.pageUrl,
+          pageTitle: annotation.pageTitle,
+          note: annotation.note || ''
+        });
+      } else {
         showAnnotationDetail(annotation);
       }
     });
+    card.style.cursor = 'pointer';
 
     // Source link handler
     card.querySelector('.annotation-card-source').addEventListener('click', (e) => {
@@ -1703,6 +2116,17 @@ Exported: ${new Date().toLocaleString()}
       updateView();
     });
 
+    // ESC closes the topmost modal. Capture phase so it runs before the
+    // search-input ESC handler — otherwise ESC would clear search AND close
+    // the modal in the same keypress.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const overlays = document.querySelectorAll('.modal-overlay');
+      if (overlays.length === 0) return;
+      e.stopPropagation();
+      overlays[overlays.length - 1].remove();
+    }, true);
+
     // ESC key to clear search
     searchInputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -1760,6 +2184,19 @@ Exported: ${new Date().toLocaleString()}
     // Color management button
     document.getElementById('btn-manage-colors').addEventListener('click', showColorManagement);
 
+    // Link previews toggle — persisted in browser.storage.local under settings.loadLinkPreviews
+    const linkPreviewToggle = document.getElementById('toggle-link-previews');
+    if (linkPreviewToggle) {
+      loadSettings().then(s => {
+        linkPreviewsEnabled = !!s.loadLinkPreviews;
+        linkPreviewToggle.checked = linkPreviewsEnabled;
+      });
+      linkPreviewToggle.addEventListener('change', async () => {
+        linkPreviewsEnabled = linkPreviewToggle.checked;
+        await saveSettings({ loadLinkPreviews: linkPreviewsEnabled });
+      });
+    }
+
     // Clear database button
     document.getElementById('btn-clear-db').addEventListener('click', clearDatabase);
 
@@ -1771,8 +2208,7 @@ Exported: ${new Date().toLocaleString()}
         case 'ANNOTATION_DELETED':
         case 'PAGE_CLEARED':
         case 'ANNOTATIONS_IMPORTED':
-          loadPages();
-          updateStorageInfo();
+          refreshDashboard();
           break;
 
         case 'ANNOTATION_UPDATED':
@@ -1785,21 +2221,16 @@ Exported: ${new Date().toLocaleString()}
                 checkbox.checked = message.patch.checked;
               }
             }
-            // Update note icon in modal if open
+            // Update note icon in modal if open — button is always present,
+            // toggle the has-note class to reflect note presence.
             if (message.patch.note !== undefined) {
               const annotationItem = document.querySelector(`.annotation-item[data-id="${message.annotationId}"]`);
               if (annotationItem) {
-                let noteIcon = annotationItem.querySelector('.annotation-note-icon');
-                const hasNote = message.patch.note && message.patch.note.trim();
-                if (hasNote && !noteIcon) {
-                  noteIcon = document.createElement('span');
-                  noteIcon.className = 'annotation-note-icon';
-                  noteIcon.title = 'Has note';
-                  noteIcon.textContent = '📝';
-                  const deleteBtn = annotationItem.querySelector('.annotation-delete');
-                  if (deleteBtn) deleteBtn.before(noteIcon);
-                } else if (!hasNote && noteIcon) {
-                  noteIcon.remove();
+                const noteBtn = annotationItem.querySelector('.annotation-note-btn');
+                if (noteBtn) {
+                  const hasNote = message.patch.note && message.patch.note.trim();
+                  noteBtn.classList.toggle('has-note', !!hasNote);
+                  noteBtn.title = hasNote ? 'View / edit note' : 'Add a note';
                 }
               }
             }
@@ -1819,6 +2250,20 @@ Exported: ${new Date().toLocaleString()}
           break;
       }
     });
+
+    // Auto-refresh on external clipboardHistory changes (content-script copy
+    // events, deletes from other tabs). Self-writes are skipped via the
+    // expectedSelfWrites marker so the note-save flow doesn't flash the UI.
+    if (browser.storage?.onChanged) {
+      browser.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'local' || !changes.clipboardHistory) return;
+        if (expectedSelfWrites > 0) {
+          expectedSelfWrites--;
+          return;
+        }
+        scheduleClipboardRefresh();
+      });
+    }
 
     // Load colors first, then pages and storage info
     loadColors().then(() => {

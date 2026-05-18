@@ -51,6 +51,11 @@
             Colors
           </button>
         </div>
+        <label class="toolbar-toggle" title="Fetch Open Graph metadata (title, description, thumbnail) for URLs in your clipboard history">
+          <input type="checkbox" id="toggle-link-previews" />
+          <span class="toolbar-toggle-track"><span class="toolbar-toggle-thumb"></span></span>
+          <span class="toolbar-toggle-label">Link previews</span>
+        </label>
         <div class="toolbar-separator"></div>
         <button class="toolbar-btn toolbar-btn-danger" id="btn-clear-db" title="Clear all data">
           Clear All
@@ -89,6 +94,7 @@
         <button class="filter-chip" data-type="checkbox">Checkboxes</button>
         <button class="filter-chip" data-type="page-note">Page Notes</button>
         <button class="filter-chip" data-type="clipboard">Clipboard</button>
+        <button class="filter-chip" data-type="has-note" title="Items with notes (excluding page notes)">📝 Notes</button>
       </div>
       <div class="filter-group">
         <span class="filter-label">Color:</span>
