@@ -2679,6 +2679,75 @@
   }
 
   /**
+   * Double-click-and-hold gesture: hold the second click of a double-click for
+   * 1 second to run "Find on Page" on the just-selected word. Holding again
+   * on the same word, or on empty space (no selection), clears the find.
+   * A different word switches the find — runFind in the background replaces
+   * existing state automatically.
+   */
+  function setupDoubleHoldFind() {
+    const HOLD_MS = 1000;
+    const MOVE_TOLERANCE_PX = 6;
+    let holdTimer = null;
+    let startX = 0;
+    let startY = 0;
+
+    function cancelHold() {
+      if (holdTimer !== null) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    }
+
+    async function fireGesture() {
+      holdTimer = null;
+      const text = (window.getSelection()?.toString() || '').trim();
+      if (!text) {
+        browser.runtime.sendMessage({ type: 'PAGE_FIND_CLEAR' });
+        return;
+      }
+      let state = null;
+      try {
+        state = await browser.runtime.sendMessage({ type: 'PAGE_FIND_GET_STATE' });
+      } catch (e) {
+        // Background may be transiently unavailable — fall through to query.
+      }
+      if (state && state.query && state.query.toLowerCase() === text.toLowerCase()) {
+        browser.runtime.sendMessage({ type: 'PAGE_FIND_CLEAR' });
+      } else {
+        browser.runtime.sendMessage({ type: 'PAGE_FIND_QUERY', payload: { query: text } });
+      }
+    }
+
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      // detail >= 2 means this press is the 2nd+ click of a sequence — i.e.
+      // the press that would dispatch dblclick on release.
+      if (e.detail < 2) return;
+      cancelHold();
+      startX = e.clientX;
+      startY = e.clientY;
+      holdTimer = setTimeout(fireGesture, HOLD_MS);
+    }, true);
+
+    document.addEventListener('mousemove', (e) => {
+      if (holdTimer === null) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (dx * dx + dy * dy > MOVE_TOLERANCE_PX * MOVE_TOLERANCE_PX) {
+        cancelHold();
+      }
+    }, true);
+
+    document.addEventListener('mouseup', cancelHold, true);
+    document.addEventListener('contextmenu', cancelHold, true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') cancelHold();
+    }, true);
+    window.addEventListener('blur', cancelHold);
+  }
+
+  /**
    * Listen for sidebar collapse/expand events
    */
   function setupSidebarEventListeners() {
@@ -2703,6 +2772,7 @@
     setupKeyboardShortcuts();
     setupMutationObserver();
     setupSidebarEventListeners();
+    setupDoubleHoldFind();
     await setupClipboardTracking();
     await loadAnnotations();
     await loadPageNote();
