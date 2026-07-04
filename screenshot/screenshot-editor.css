@@ -47,6 +47,68 @@
   white-space: nowrap;
 }
 
+/* Standalone purple selection outline kept on-screen behind the action bar
+ * so the user still sees what region they captured. Non-interactive. */
+.annotatepro-selection-outline {
+  position: fixed;
+  border: 2px dashed #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+  pointer-events: none;
+  z-index: 2147483646;
+}
+
+/* Inline area quick-action bar (shown after a selection, before the editor) */
+.annotatepro-area-actions {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.annotatepro-area-btn {
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #333;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.annotatepro-area-btn:hover {
+  background: #444;
+}
+
+.annotatepro-area-btn-edit {
+  background: #6366f1;
+  color: #fff;
+}
+
+.annotatepro-area-btn-edit:hover {
+  background: #4f46e5;
+}
+
+.annotatepro-area-btn-close {
+  background: transparent;
+  color: #999;
+  padding: 7px 10px;
+  font-size: 18px;
+}
+
+.annotatepro-area-btn-close:hover {
+  color: #fff;
+}
+
 /* Screenshot Editor Overlay */
 .annotatepro-screenshot-editor {
   position: fixed;

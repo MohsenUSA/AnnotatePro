@@ -144,8 +144,10 @@
       const width = Math.abs(endX - startX);
       const height = Math.abs(endY - startY);
 
-      // Remove overlay
+      // Remove overlay (and its keydown handler) before capturing so the
+      // dashed selection box isn't baked into the screenshot.
       overlay.remove();
+      document.removeEventListener('keydown', onKeyDown);
 
       // Minimum selection size
       if (width < 10 || height < 10) {
@@ -162,7 +164,21 @@
         if (response && response.dataUrl) {
           // Crop the image to selection
           const croppedDataUrl = await cropImage(response.dataUrl, left, top, width, height);
-          openEditor(croppedDataUrl);
+
+          // Re-draw the purple selection outline (standalone, non-interactive)
+          // so the user still sees exactly what they captured behind the bar.
+          const outline = document.createElement('div');
+          outline.className = 'annotatepro-selection-outline';
+          outline.style.left = left + 'px';
+          outline.style.top = top + 'px';
+          outline.style.width = width + 'px';
+          outline.style.height = height + 'px';
+          document.body.appendChild(outline);
+
+          // Most captures just need a quick copy/export, so offer inline
+          // actions anchored to the selection instead of always opening the
+          // full editor. "Edit" is one click away for annotation.
+          showAreaActionBar(croppedDataUrl, { left, top, width, height }, () => outline.remove());
         }
       } catch (error) {
         console.error('AnnotatePro: Screenshot capture failed', error);
@@ -183,6 +199,103 @@
     document.addEventListener('keydown', onKeyDown);
 
     document.body.appendChild(overlay);
+  }
+
+  /**
+   * Inline quick-action bar shown after an area selection.
+   * Lets the user copy/download/export the cropped image without opening the
+   * full editor (the common case), with an "Edit" button to open the editor.
+   * @param {string} croppedDataUrl - PNG data URL of the selected region
+   * @param {{left:number, top:number, width:number, height:number}} rect - viewport-space selection bounds
+   */
+  function showAreaActionBar(croppedDataUrl, rect, onDismiss) {
+    // Only one bar at a time.
+    const existing = document.querySelector('.annotatepro-area-actions');
+    if (existing) existing.remove();
+
+    const bar = document.createElement('div');
+    bar.className = 'annotatepro-area-actions';
+    bar.style.visibility = 'hidden'; // hide until positioned to avoid a flash
+    bar.innerHTML = `
+      <button class="annotatepro-area-btn" data-area-action="copy" title="Copy to clipboard">📋 Copy</button>
+      <button class="annotatepro-area-btn" data-area-action="png" title="Download PNG">⬇ PNG</button>
+      <button class="annotatepro-area-btn" data-area-action="pdf" title="Export as PDF">📄 PDF</button>
+      <button class="annotatepro-area-btn annotatepro-area-btn-edit" data-area-action="edit" title="Open in editor">✏️ Edit</button>
+      <button class="annotatepro-area-btn annotatepro-area-btn-close" data-area-action="close" title="Cancel (ESC)">&times;</button>
+    `;
+    document.body.appendChild(bar);
+
+    // Position below the selection, clamped to the viewport; flip above if
+    // there isn't room below.
+    const gap = 8;
+    const barRect = bar.getBoundingClientRect();
+    let top = rect.top + rect.height + gap;
+    if (top + barRect.height > window.innerHeight) {
+      top = Math.max(gap, rect.top - barRect.height - gap);
+    }
+    let left = rect.left;
+    if (left + barRect.width > window.innerWidth) {
+      left = Math.max(gap, window.innerWidth - barRect.width - gap);
+    }
+    bar.style.top = top + 'px';
+    bar.style.left = left + 'px';
+    bar.style.visibility = 'visible';
+
+    // Lazily build the source canvas once, shared across actions.
+    let canvasPromise = null;
+    const getCanvas = () => (canvasPromise || (canvasPromise = canvasFromDataUrl(croppedDataUrl)));
+
+    function dismiss() {
+      bar.remove();
+      if (onDismiss) onDismiss();
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('mousedown', onDocMouseDown, true);
+    }
+
+    function onKeyDown(e) {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        dismiss();
+      }
+    }
+
+    function onDocMouseDown(e) {
+      if (!bar.contains(e.target)) dismiss();
+    }
+
+    bar.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-area-action]');
+      if (!btn) return;
+      const action = btn.dataset.areaAction;
+
+      if (action === 'close') { dismiss(); return; }
+      if (action === 'edit') { dismiss(); openEditor(croppedDataUrl); return; }
+
+      try {
+        const srcCanvas = await getCanvas();
+        if (action === 'copy') {
+          await copyCanvasToClipboard(srcCanvas);
+          showToast('Copied To Clipboard!', 'success');
+        } else if (action === 'png') {
+          downloadCanvasPng(srcCanvas);
+          showToast('Screenshot Downloaded!', 'success');
+        } else if (action === 'pdf') {
+          exportCanvasAsPdf(srcCanvas);
+          showToast('PDF Exported!', 'success');
+        }
+        dismiss();
+      } catch (error) {
+        console.error('AnnotatePro: area quick action failed', error);
+        showToast('Action Failed', 'error');
+      }
+    });
+
+    // Defer the outside-click/ESC listeners so the mouseup that ended the
+    // selection doesn't instantly dismiss the bar.
+    setTimeout(() => {
+      document.addEventListener('keydown', onKeyDown, true);
+      document.addEventListener('mousedown', onDocMouseDown, true);
+    }, 0);
   }
 
   /**
@@ -1531,26 +1644,56 @@
   /**
    * Copy canvas to clipboard
    */
+  // ---- Shared output helpers ----
+  // These operate on any source canvas so both the editor and the inline
+  // area-capture quick actions reuse the exact same copy/PNG/PDF logic.
+  // They perform no flatten/restore and no toast — callers own that.
+
+  async function copyCanvasToClipboard(srcCanvas) {
+    const blob = await new Promise(resolve => srcCanvas.toBlob(resolve, 'image/png'));
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'image/png': blob })
+    ]);
+  }
+
+  function downloadCanvasPng(srcCanvas) {
+    const dataUrl = srcCanvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.download = `screenshot-${Date.now()}.png`;
+    link.href = dataUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  /**
+   * Build an offscreen canvas from an image data URL (for inline actions that
+   * never open the editor and so have no editor canvas to read from).
+   */
+  async function canvasFromDataUrl(dataUrl) {
+    const img = await loadImage(dataUrl);
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth || img.width;
+    c.height = img.naturalHeight || img.height;
+    c.getContext('2d').drawImage(img, 0, 0);
+    return c;
+  }
+
+  /**
+   * Copy the editor canvas to the clipboard (flattens annotations first).
+   */
   async function copyToClipboard() {
+    // Flatten text annotations to canvas before copying
+    flattenTextToCanvas();
     try {
-      // Flatten text annotations to canvas before copying
-      flattenTextToCanvas();
-
-      const blob = await new Promise(resolve => {
-        canvas.toBlob(resolve, 'image/png');
-      });
-
-      // Restore canvas state (remove flattened text)
-      restoreFromHistory();
-
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob })
-      ]);
-
+      await copyCanvasToClipboard(canvas);
       showToast('Copied To Clipboard!', 'success');
     } catch (error) {
       console.error('AnnotatePro: Failed to copy to clipboard', error);
       showToast('Failed To Copy To Clipboard', 'error');
+    } finally {
+      // Restore canvas state (remove flattened text)
+      restoreFromHistory();
     }
   }
 
@@ -1560,31 +1703,40 @@
   function downloadScreenshot() {
     // Flatten text annotations to canvas before downloading
     flattenTextToCanvas();
-
-    const dataUrl = canvas.toDataURL('image/png');
-
-    // Restore canvas state (remove flattened text)
-    restoreFromHistory();
-
-    const link = document.createElement('a');
-    link.download = `screenshot-${Date.now()}.png`;
-    link.href = dataUrl;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast('Screenshot Downloaded!', 'success');
+    try {
+      downloadCanvasPng(canvas);
+      showToast('Screenshot Downloaded!', 'success');
+    } finally {
+      // Restore canvas state (remove flattened text)
+      restoreFromHistory();
+    }
   }
 
   /**
-   * Export screenshot as PDF
+   * Export the editor canvas as PDF (flattens annotations first).
    */
   function exportAsPdf() {
+    // Flatten text annotations to canvas before exporting
+    flattenTextToCanvas();
     try {
-      // Flatten text annotations to canvas before exporting
-      flattenTextToCanvas();
+      exportCanvasAsPdf(canvas);
+      showToast('PDF Exported!', 'success');
+    } catch (error) {
+      console.error('AnnotatePro: Failed to export PDF', error);
+      showToast('Failed To Export PDF', 'error');
+    } finally {
+      // Restore canvas state (remove flattened text)
+      restoreFromHistory();
+    }
+  }
 
+  /**
+   * Export any source canvas as a single-page PDF and download it.
+   * Throws on failure; callers handle toasts.
+   */
+  function exportCanvasAsPdf(srcCanvas) {
       // Get image as JPEG for smaller PDF size
-      const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      const jpegDataUrl = srcCanvas.toDataURL('image/jpeg', 0.92);
       const jpegBase64 = jpegDataUrl.split(',')[1];
       const jpegBinary = atob(jpegBase64);
 
@@ -1597,8 +1749,8 @@
       const availableWidth = maxWidth - (margin * 2);
       const availableHeight = maxHeight - (margin * 2);
 
-      let imgWidth = canvas.width;
-      let imgHeight = canvas.height;
+      let imgWidth = srcCanvas.width;
+      let imgHeight = srcCanvas.height;
 
       // Scale to fit available space
       const scaleX = availableWidth / imgWidth;
@@ -1625,17 +1777,6 @@
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-
-      // Restore canvas state (remove flattened text)
-      restoreFromHistory();
-
-      showToast('PDF Exported!', 'success');
-    } catch (error) {
-      console.error('AnnotatePro: Failed to export PDF', error);
-      showToast('Failed To Export PDF', 'error');
-      // Restore canvas state on error too
-      restoreFromHistory();
-    }
   }
 
   /**
