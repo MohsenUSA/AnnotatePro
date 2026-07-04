@@ -1841,12 +1841,47 @@ Exported: ${new Date().toLocaleString()}
         return;
       }
 
+      // Pre-flight storage check so we fail loudly here instead of silently
+      // maxing out storage mid-import. Annotations live in IndexedDB, so
+      // navigator.storage.estimate() (not storage.local.getBytesInUse) is the
+      // right quota source. Best-effort: if the estimate is unavailable, we
+      // fall through and let the import try (the backend still stops on quota).
+      try {
+        if (navigator.storage && navigator.storage.estimate) {
+          const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+          const incomingBytes = new Blob([JSON.stringify(data.annotations)]).size;
+          // Real growth exceeds raw JSON once IndexedDB adds keys + index
+          // entries, so pad with a safety multiplier before comparing.
+          if (quota > 0 && usage + incomingBytes * 1.5 > quota) {
+            alert(
+              `Not enough storage to import safely.\n\n` +
+              `This import needs about ${formatBytes(incomingBytes)}, but only ` +
+              `${formatBytes(Math.max(0, quota - usage))} is free ` +
+              `(${formatBytes(usage)} of ${formatBytes(quota)} used).\n\n` +
+              `Delete some annotations or export and clear old pages, then try again.`
+            );
+            return;
+          }
+        }
+      } catch (error) {
+        console.warn('Storage estimate failed before import:', error);
+      }
+
       const confirmMsg = `Import ${data.annotations.length} annotations?\n\nThis will add to your existing annotations. Duplicates will be skipped.`;
       if (!confirm(confirmMsg)) return;
 
       const result = await sendMessage('IMPORT_ANNOTATIONS', { annotations: data.annotations });
 
-      alert(`Import complete!\n\nImported: ${result.imported}\nSkipped (duplicates): ${result.skipped}`);
+      if (result.quotaExceeded) {
+        alert(
+          `Storage limit reached during import.\n\n` +
+          `Imported: ${result.imported}\nSkipped (duplicates): ${result.skipped}\n\n` +
+          `The rest could not be saved. Free up space and re-import to add ` +
+          `the remainder (already-imported items will be skipped as duplicates).`
+        );
+      } else {
+        alert(`Import complete!\n\nImported: ${result.imported}\nSkipped (duplicates): ${result.skipped}`);
+      }
 
       // Refresh the page list
       loadPages();

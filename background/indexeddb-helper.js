@@ -678,35 +678,48 @@ class IndexedDBHelper {
 
     let imported = 0;
     let skipped = 0;
+    let quotaExceeded = false;
 
     for (const annotation of annotations) {
-      try {
-        // Generate new ID to avoid conflicts
-        const record = {
-          ...annotation,
-          id: this.generateId(),
-          importedAt: Date.now()
-        };
+      // Resolve with a status string so quota failures aren't conflated
+      // with duplicate skips (both surface as request errors).
+      const status = await new Promise((resolve) => {
+        try {
+          // Generate new ID to avoid conflicts
+          const record = {
+            ...annotation,
+            id: this.generateId(),
+            importedAt: Date.now()
+          };
 
-        await new Promise((resolve, reject) => {
           const store = this.getStore('annotations', 'readwrite');
           const request = store.add(record);
-          request.onsuccess = () => {
-            imported++;
-            resolve();
-          };
+          request.onsuccess = () => resolve('imported');
           request.onerror = () => {
-            // Likely duplicate (unique constraint on pageUrl + elementFingerprint)
-            skipped++;
-            resolve();
+            if (request.error && request.error.name === 'QuotaExceededError') {
+              resolve('quota');
+            } else {
+              // Likely duplicate (unique constraint on pageUrl + elementFingerprint)
+              resolve('skipped');
+            }
           };
-        });
-      } catch (error) {
+        } catch (error) {
+          resolve(error && error.name === 'QuotaExceededError' ? 'quota' : 'skipped');
+        }
+      });
+
+      if (status === 'imported') {
+        imported++;
+      } else if (status === 'quota') {
+        // Out of space — stop; further adds would keep failing.
+        quotaExceeded = true;
+        break;
+      } else {
         skipped++;
       }
     }
 
-    return { imported, skipped };
+    return { imported, skipped, quotaExceeded };
   }
 }
 
