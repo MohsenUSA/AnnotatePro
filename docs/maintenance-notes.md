@@ -59,7 +59,7 @@ Follow-ups before committing or shortly after:
 
 ## High priority
 
-- [ ] **Screenshot text-tool listener leak** — `screenshot/screenshot-editor.js:1135-1170`. Drag `mousemove` / `mouseup` listeners are attached to `document` every time a text element is created, but only removed in a single branch. Listeners stack across captures. Fix: detach in all teardown paths, or attach once with delegation.
+- [x] ~~**Screenshot text-tool listener leak** — `screenshot/screenshot-editor.js:1135-1170`. Drag `mousemove` / `mouseup` listeners are attached to `document` every time a text element is created, but only removed in a single branch. Listeners stack across captures.~~ **Fixed 2026-07-04:** drag listeners now attach on `mousedown` and detach unconditionally in `onDragEnd`, so `document` holds at most one pair during an active drag.
 - [ ] **Bulk import has no quota check** — `dashboard/dashboard.js:1415-1449`. Large JSON imports silently fail past the storage quota with no user feedback. Call `browser.storage.local.getBytesInUse()` (or `navigator.storage.estimate()`) before `set()` and surface an error.
 - [ ] **Service-worker keepalive alarm is cosmetic** — `background/background.js:788-793`. The 30s alarm doesn't actually prevent MV3 from suspending the worker after ~5 min idle; first action after idle is slow. Either accept it and ensure all state is persisted (preferred for MV3), or document the latency. Don't pretend the alarm fixes it.
 

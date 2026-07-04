@@ -1142,10 +1142,11 @@
         origY = annotation.y;
         el.style.cursor = 'grabbing';
         el.classList.add('dragging');
+        // Attach drag listeners only for the duration of this drag so they
+        // don't accumulate on document across re-renders/captures.
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('mouseup', onDragEnd);
       });
-
-      document.addEventListener('mousemove', onDragMove);
-      document.addEventListener('mouseup', onDragEnd);
 
       function onDragMove(e) {
         if (!isDragging) return;
@@ -1163,6 +1164,10 @@
       }
 
       function onDragEnd() {
+        // Always detach, even if a drag never actually started, so no stale
+        // document listeners survive this element.
+        document.removeEventListener('mousemove', onDragMove);
+        document.removeEventListener('mouseup', onDragEnd);
         if (!isDragging) return;
         isDragging = false;
         el.style.cursor = 'move';
