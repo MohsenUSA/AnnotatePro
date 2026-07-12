@@ -1263,6 +1263,199 @@
   /**
    * Switch between views (all, pages, annotations)
    */
+  // ---- Keyboard shortcuts settings -----------------------------------------
+
+  const Shortcuts = window.AnnotateProShortcuts;
+  let capturingCleanup = null; // active key-capture teardown, if any
+
+  // Modifier-only keydowns to ignore while waiting for the real key.
+  const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta', 'OS', 'AltGraph']);
+
+  async function loadShortcutMap() {
+    const settings = await loadSettings();
+    return { ...Shortcuts.DEFAULT_SHORTCUTS, ...(settings.shortcuts || {}) };
+  }
+
+  // A global (manifest command) shortcut must include Ctrl or Alt and must not
+  // rely on Meta/Mod — Firefox rejects those for commands.
+  function validateGlobalBinding(binding) {
+    const tokens = binding.split('+');
+    const mods = tokens.slice(0, -1);
+    if (mods.includes('Meta') || mods.includes('Mod')) {
+      return 'Global shortcuts can’t use the ⌘/Meta key.';
+    }
+    if (!mods.includes('Ctrl') && !mods.includes('Alt')) {
+      return 'Global shortcuts must include Ctrl or Alt.';
+    }
+    return null;
+  }
+
+  // Find another action in the same conflict scope already bound to `binding`.
+  function findConflict(map, action, binding) {
+    for (const other of Shortcuts.ACTIONS) {
+      if (other.id === action.id) continue;
+      if (other.scope !== action.scope) continue;
+      if (map[other.id] === binding) return other;
+    }
+    return null;
+  }
+
+  function cancelCapture() {
+    if (capturingCleanup) {
+      capturingCleanup();
+      capturingCleanup = null;
+    }
+  }
+
+  function beginCapture(btn, action, map) {
+    cancelCapture();
+    btn.classList.add('capturing');
+    btn.textContent = 'Press keys…';
+    const row = btn.closest('.shortcut-row');
+    const errEl = row ? row.querySelector('.shortcut-error') : null;
+    if (errEl) errEl.textContent = '';
+
+    const restore = () => {
+      btn.classList.remove('capturing');
+      btn.textContent = Shortcuts.formatBinding(map[action.id]);
+    };
+
+    const onKey = async (e) => {
+      if (MODIFIER_KEYS.has(e.key)) return; // wait for the non-modifier key
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === 'Escape') {
+        cancelCapture();
+        return;
+      }
+
+      const binding = Shortcuts.eventToBinding(e);
+
+      if (action.global) {
+        const err = validateGlobalBinding(binding);
+        if (err) {
+          if (errEl) errEl.textContent = err;
+          return; // keep capturing so the user can try again
+        }
+      }
+
+      const conflict = findConflict(map, action, binding);
+      if (conflict) {
+        if (errEl) errEl.textContent = `Already used by “${conflict.label}”.`;
+        return;
+      }
+
+      cancelCapture();
+      map[action.id] = binding;
+      btn.textContent = Shortcuts.formatBinding(binding);
+      const clearBtn = btn.parentElement && btn.parentElement.querySelector('.shortcut-clear');
+      if (clearBtn) clearBtn.style.visibility = 'visible';
+      await saveShortcut(action.id, binding);
+    };
+
+    // Capture phase so we intercept keys before the dashboard's other handlers.
+    document.addEventListener('keydown', onKey, true);
+    capturingCleanup = () => {
+      document.removeEventListener('keydown', onKey, true);
+      restore();
+    };
+  }
+
+  async function saveShortcut(actionId, binding) {
+    const settings = await loadSettings();
+    const shortcuts = { ...(settings.shortcuts || {}), [actionId]: binding };
+    await saveSettings({ shortcuts });
+  }
+
+  async function resetAllShortcuts() {
+    if (!confirm('Reset all keyboard shortcuts to their defaults?')) return;
+    await saveSettings({ shortcuts: {} });
+    renderShortcutsSettings();
+  }
+
+  const GROUP_NOTES = {
+    'Page actions': 'Work anywhere on a page. Must include Ctrl or Alt.',
+    'Screenshots': 'Capture modes. Must include Ctrl or Alt; “—” means no shortcut assigned.',
+    'Highlight colors': 'Applied to selected text, by color order.',
+    'Screenshot editor': 'Active only while the screenshot editor is open.'
+  };
+
+  async function renderShortcutsSettings() {
+    cancelCapture();
+    const container = document.getElementById('shortcuts-groups');
+    if (!container || !Shortcuts) return;
+    const map = await loadShortcutMap();
+    container.innerHTML = '';
+
+    // Preserve the ACTIONS order while grouping.
+    const groups = [];
+    const byName = {};
+    for (const action of Shortcuts.ACTIONS) {
+      if (!byName[action.group]) {
+        byName[action.group] = { name: action.group, actions: [] };
+        groups.push(byName[action.group]);
+      }
+      byName[action.group].actions.push(action);
+    }
+
+    for (const group of groups) {
+      const section = document.createElement('div');
+      section.className = 'shortcut-group';
+
+      const heading = document.createElement('div');
+      heading.className = 'shortcut-group-header';
+      heading.innerHTML = `<h3>${escapeHtml(group.name)}</h3>` +
+        (GROUP_NOTES[group.name] ? `<span class="shortcut-group-note">${escapeHtml(GROUP_NOTES[group.name])}</span>` : '');
+      section.appendChild(heading);
+
+      for (const action of group.actions) {
+        const row = document.createElement('div');
+        row.className = 'shortcut-row';
+
+        const label = document.createElement('span');
+        label.className = 'shortcut-label';
+        label.textContent = action.label;
+
+        const controls = document.createElement('div');
+        controls.className = 'shortcut-controls';
+
+        const btn = document.createElement('button');
+        btn.className = 'shortcut-key';
+        btn.textContent = Shortcuts.formatBinding(map[action.id]);
+        btn.title = 'Click, then press a new shortcut';
+        btn.addEventListener('click', () => beginCapture(btn, action, map));
+
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'shortcut-clear';
+        clearBtn.textContent = '✕';
+        clearBtn.title = 'Remove this shortcut';
+        clearBtn.style.visibility = map[action.id] ? 'visible' : 'hidden';
+        clearBtn.addEventListener('click', async () => {
+          cancelCapture();
+          map[action.id] = '';
+          btn.textContent = Shortcuts.formatBinding('');
+          clearBtn.style.visibility = 'hidden';
+          const rowErr = row.querySelector('.shortcut-error');
+          if (rowErr) rowErr.textContent = '';
+          await saveShortcut(action.id, '');
+        });
+
+        const err = document.createElement('span');
+        err.className = 'shortcut-error';
+
+        controls.appendChild(btn);
+        controls.appendChild(clearBtn);
+        row.appendChild(label);
+        row.appendChild(controls);
+        row.appendChild(err);
+        section.appendChild(row);
+      }
+
+      container.appendChild(section);
+    }
+  }
+
   function switchView(view) {
     activeView = view;
 
@@ -1292,6 +1485,24 @@
     const filtersBar = document.getElementById('filters-bar');
     const searchResultsEl = document.getElementById('search-results');
     const pageListEl = document.getElementById('page-list');
+    const settingsViewEl = document.getElementById('settings-view');
+    const toolbarEl = document.querySelector('.toolbar');
+    const searchBoxEl = document.querySelector('.search-box');
+
+    // The settings view replaces the page/annotation lists and hides the
+    // list-oriented chrome (toolbar, search box, filters).
+    const inSettings = activeView === 'settings';
+    if (settingsViewEl) settingsViewEl.style.display = inSettings ? 'block' : 'none';
+    if (toolbarEl) toolbarEl.style.display = inSettings ? 'none' : '';
+    if (searchBoxEl) searchBoxEl.style.visibility = inSettings ? 'hidden' : '';
+
+    if (inSettings) {
+      pageListEl.style.display = 'none';
+      searchResultsEl.style.display = 'none';
+      filtersBar.style.display = 'none';
+      renderShortcutsSettings();
+      return;
+    }
 
     if (activeView === 'pages') {
       // Pages only view
@@ -2235,6 +2446,12 @@ Exported: ${new Date().toLocaleString()}
     // Clear database button
     document.getElementById('btn-clear-db').addEventListener('click', clearDatabase);
 
+    // Reset-all-shortcuts button (Shortcuts view)
+    const resetShortcutsBtn = document.getElementById('btn-reset-shortcuts');
+    if (resetShortcutsBtn) {
+      resetShortcutsBtn.addEventListener('click', resetAllShortcuts);
+    }
+
     // Listen for messages from background script
     browser.runtime.onMessage.addListener((message) => {
       switch (message.type) {
@@ -2303,7 +2520,12 @@ Exported: ${new Date().toLocaleString()}
     // Load colors first, then pages and storage info
     loadColors().then(() => {
       loadPages().then(() => {
-        updateView(); // Initialize the "All" view properly
+        // Deep link: dashboard.html#shortcuts opens the Shortcuts view directly.
+        if (window.location.hash === '#shortcuts') {
+          switchView('settings');
+        } else {
+          updateView(); // Initialize the "All" view properly
+        }
       });
       updateStorageInfo();
     });

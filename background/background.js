@@ -702,8 +702,64 @@ browser.commands.onCommand.addListener(async (command) => {
     case 'capture-screenshot':
       browser.tabs.sendMessage(tabId, { type: 'COMMAND_CAPTURE_AREA' });
       break;
+    case 'capture-visible':
+      browser.tabs.sendMessage(tabId, { type: 'COMMAND_CAPTURE_VISIBLE' });
+      break;
+    case 'capture-visible-timer':
+      browser.tabs.sendMessage(tabId, { type: 'COMMAND_CAPTURE_VISIBLE_TIMER' });
+      break;
+    case 'capture-fullpage':
+      browser.tabs.sendMessage(tabId, { type: 'COMMAND_CAPTURE_FULL_PAGE' });
+      break;
   }
 });
+
+/**
+ * Rebind the manifest `commands` (highlight / checkbox / sidebar / screenshot)
+ * to the user's custom shortcuts, saved from the dashboard under
+ * settings.shortcuts. An empty/missing binding resets that command to its
+ * manifest default. Runs on startup and whenever settings change.
+ */
+const COMMAND_ACTIONS = {
+  highlight: 'toggle-highlight',
+  checkbox: 'toggle-checkbox',
+  toggleSidebar: 'toggle-sidebar',
+  captureArea: 'capture-screenshot',
+  captureVisible: 'capture-visible',
+  captureVisibleTimer: 'capture-visible-timer',
+  captureFullPage: 'capture-fullpage'
+};
+
+async function applyCommandShortcuts() {
+  if (!browser.commands || !browser.commands.update) return;
+  let shortcuts = {};
+  try {
+    const out = await browser.storage.local.get('settings');
+    shortcuts = (out.settings && out.settings.shortcuts) || {};
+  } catch (e) {
+    return;
+  }
+  for (const [action, name] of Object.entries(COMMAND_ACTIONS)) {
+    const shortcut = shortcuts[action];
+    try {
+      if (shortcut) {
+        await browser.commands.update({ name, shortcut });
+      } else if (browser.commands.reset) {
+        await browser.commands.reset(name);
+      }
+    } catch (err) {
+      console.warn('[AnnotatePro] Could not apply shortcut', name, shortcut, err);
+    }
+  }
+}
+
+if (browser.storage?.onChanged) {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.settings) {
+      applyCommandShortcuts();
+    }
+  });
+}
 
 /**
  * Create context menus
@@ -1011,6 +1067,8 @@ browser.runtime.onInstalled.addListener(async () => {
   try {
     // Pre-open database immediately so it's ready for requests
     await db.open();
+    // Restore any custom keyboard shortcuts for the manifest commands.
+    applyCommandShortcuts();
     console.log('AnnotatePro: Background script ready');
   } catch (error) {
     console.error('AnnotatePro: Failed to initialize background:', error);

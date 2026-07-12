@@ -1894,6 +1894,7 @@
   function onEditorKeyDown(e) {
     if (!editorEl) return;
 
+    // Escape and shape-delete stay fixed (not user-configurable).
     if (e.key === 'Escape') {
       // Cancel crop if in progress
       if (isCropping) {
@@ -1904,53 +1905,68 @@
       return;
     }
 
-    if (e.ctrlKey || e.metaKey) {
-      if (e.key === 'z') {
-        e.preventDefault();
-        undo();
-      } else if (e.key === 'y' || (e.shiftKey && e.key === 'z')) {
-        e.preventDefault();
-        redo();
-      } else if (e.key === 'c' && !window.getSelection().toString()) {
-        e.preventDefault();
-        copyToClipboard();
+    // Bindings for every other editor action come from the shared shortcut map
+    // (AnnotateProShortcuts, backed by settings.shortcuts and edited in the
+    // dashboard). Falls back to hardcoded defaults if the module is missing.
+    const sc = window.AnnotateProShortcuts;
+    const hit = (id) => sc && sc.matches(id, e);
+
+    if (hit('editorUndo')) {
+      e.preventDefault();
+      undo();
+      return;
+    }
+    // Mod+Shift+Z remains an always-on alias for redo alongside the configurable binding.
+    if (hit('editorRedo') || (sc && sc.bindingMatches('Mod+Shift+Z', e))) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (hit('editorCopy') && !window.getSelection().toString()) {
+      e.preventDefault();
+      copyToClipboard();
+      return;
+    }
+
+    // Tool shortcuts.
+    const toolActions = {
+      editorPen: 'pen', editorRect: 'rect', editorEllipse: 'ellipse',
+      editorArrow: 'arrow', editorText: 'text', editorCrop: 'crop', editorPan: 'pan'
+    };
+    for (const [id, tool] of Object.entries(toolActions)) {
+      if (hit(id)) {
+        currentTool = tool;
+        editorEl.querySelectorAll('[data-tool]').forEach(b => {
+          b.classList.toggle('active', b.dataset.tool === currentTool);
+        });
+        updateCanvasCursor();
+        return;
       }
     }
 
-    // Tool shortcuts (without modifiers)
-    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-      const toolMap = { p: 'pen', r: 'rect', e: 'ellipse', a: 'arrow', t: 'text', c: 'crop', h: 'pan' };
-      if (toolMap[e.key]) {
-        currentTool = toolMap[e.key];
-        editorEl.querySelectorAll('[data-tool]').forEach(b => {
-          b.classList.toggle('active', b.dataset.tool === currentTool);
-        });
-        updateCanvasCursor();
-      }
+    // Hold-to-pan.
+    if (hit('editorPanHold') && !spaceHeld) {
+      e.preventDefault();
+      spaceHeld = true;
+      previousTool = currentTool;
+      currentTool = 'pan';
+      editorEl.querySelectorAll('[data-tool]').forEach(b => {
+        b.classList.toggle('active', b.dataset.tool === currentTool);
+      });
+      updateCanvasCursor();
+      return;
+    }
 
-      // Space bar for temporary pan mode
-      if (e.key === ' ' && !spaceHeld) {
-        e.preventDefault();
-        spaceHeld = true;
-        previousTool = currentTool;
-        currentTool = 'pan';
-        editorEl.querySelectorAll('[data-tool]').forEach(b => {
-          b.classList.toggle('active', b.dataset.tool === currentTool);
-        });
-        updateCanvasCursor();
-      }
-
-      // Zoom shortcuts
-      if (e.key === '+' || e.key === '=') {
-        e.preventDefault();
-        zoomIn();
-      } else if (e.key === '-' || e.key === '_') {
-        e.preventDefault();
-        zoomOut();
-      } else if (e.key === '0') {
-        e.preventDefault();
-        zoomReset();
-      }
+    // Zoom shortcuts.
+    if (hit('editorZoomIn')) {
+      e.preventDefault();
+      zoomIn();
+    } else if (hit('editorZoomOut')) {
+      e.preventDefault();
+      zoomOut();
+    } else if (hit('editorZoomReset')) {
+      e.preventDefault();
+      zoomReset();
     }
   }
 
@@ -1960,8 +1976,10 @@
   function onEditorKeyUp(e) {
     if (!editorEl) return;
 
-    // Release space bar - restore previous tool
-    if (e.key === ' ' && spaceHeld) {
+    // Release hold-to-pan key - restore previous tool
+    const sc = window.AnnotateProShortcuts;
+    const panHoldReleased = sc ? sc.matches('editorPanHold', e) : e.key === ' ';
+    if (panHoldReleased && spaceHeld) {
       e.preventDefault();
       spaceHeld = false;
       // Stop any panning in progress and prevent drawing from starting

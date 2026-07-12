@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AnnotatePro",
-  "version": "1.7",
+  "version": "1.8",
   "description": "Persistent web annotations - add checkboxes and highlights to any webpage",
   "browser_specific_settings": {
     "gecko": {
@@ -26,7 +26,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["lib/qrcode.min.js", "content/content.js", "sidebar/sidebar.js", "screenshot/screenshot-editor.js", "pdf/pdf-overlay.js"],
+      "js": ["lib/qrcode.min.js", "lib/shortcuts.js", "content/content.js", "sidebar/sidebar.js", "screenshot/screenshot-editor.js", "pdf/pdf-overlay.js"],
       "css": ["styles/annotations.css", "sidebar/sidebar.css", "screenshot/screenshot-editor.css", "pdf/pdf-overlay.css"],
       "run_at": "document_idle"
     }
@@ -69,7 +69,16 @@
       "suggested_key": {
         "default": "Alt+X"
       },
-      "description": "Capture screenshot"
+      "description": "Capture screenshot (selected area)"
+    },
+    "capture-visible": {
+      "description": "Capture screenshot (visible area)"
+    },
+    "capture-visible-timer": {
+      "description": "Capture screenshot (visible area, 5s timer)"
+    },
+    "capture-fullpage": {
+      "description": "Capture screenshot (whole page)"
     }
   },
   "web_accessible_resources": [

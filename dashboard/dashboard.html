@@ -84,6 +84,10 @@
           <span class="view-tab-icon">📝</span>
           <span class="view-tab-label">Annotations</span>
         </button>
+        <button class="view-tab" data-view="settings">
+          <span class="view-tab-icon">⌨️</span>
+          <span class="view-tab-label">Shortcuts</span>
+        </button>
       </div>
     </div>
 
@@ -127,8 +131,20 @@
       </div>
       <div class="search-results-list"></div>
     </div>
+
+    <section class="settings-view" id="settings-view" style="display: none;">
+      <div class="settings-header">
+        <div>
+          <h2 class="settings-title">Keyboard shortcuts</h2>
+          <p class="settings-desc">Click a shortcut, then press the keys you want. Press <kbd>Esc</kbd> to cancel.</p>
+        </div>
+        <button class="toolbar-btn" id="btn-reset-shortcuts" title="Restore every shortcut to its default">Reset all to defaults</button>
+      </div>
+      <div class="shortcuts-groups" id="shortcuts-groups"></div>
+    </section>
   </div>
 
+  <script src="../lib/shortcuts.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>

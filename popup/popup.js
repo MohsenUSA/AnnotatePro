@@ -976,6 +976,20 @@ function init() {
     window.close();
   });
 
+  // Customize shortcuts link - open dashboard directly on the Shortcuts view
+  const customizeLink = document.getElementById('btn-customize-shortcuts');
+  if (customizeLink) {
+    customizeLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      browser.tabs.create({ url: browser.runtime.getURL('dashboard/dashboard.html#shortcuts') });
+      window.close();
+    });
+  }
+
+  // Footer shortcut hints — rendered from the user's saved bindings so they
+  // stay in sync with anything customized in the dashboard.
+  renderShortcutHints();
+
   // Page note button
   document.getElementById('btn-page-note').addEventListener('click', async () => {
     if (currentTab) {
@@ -1209,6 +1223,34 @@ function setupMessageListener() {
         }
         break;
     }
+  });
+}
+
+/**
+ * Render the footer shortcut hints from the user's saved bindings so they
+ * reflect anything customized in the dashboard. Hides a hint whose action has
+ * no shortcut assigned.
+ */
+async function renderShortcutHints() {
+  const S = window.AnnotateProShortcuts;
+  if (!S) return;
+  await S.reload();
+  const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
+
+  const bindingToKbd = (binding) =>
+    binding
+      .split('+')
+      .map((t) => `<kbd>${escapeHtml(S.formatBinding(t))}</kbd>`)
+      .join(IS_MAC ? '' : '+');
+
+  document.querySelectorAll('.shortcut[data-action]').forEach((el) => {
+    const binding = S.get(el.dataset.action);
+    if (!binding) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = '';
+    el.innerHTML = `${bindingToKbd(binding)} ${escapeHtml(el.dataset.label || '')}`;
   });
 }
 

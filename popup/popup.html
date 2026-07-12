@@ -159,9 +159,10 @@
 
     <footer class="footer">
       <div class="shortcuts">
-        <span class="shortcut"><kbd>Alt</kbd>+<kbd>H</kbd> Highlight</span>
-        <span class="shortcut"><kbd>Alt</kbd>+<kbd>C</kbd> Checkbox</span>
-        <span class="shortcut"><kbd>Alt</kbd>+<kbd>X</kbd> Screenshot</span>
+        <span class="shortcut" id="hint-highlight" data-action="highlight" data-label="Highlight"></span>
+        <span class="shortcut" id="hint-checkbox" data-action="checkbox" data-label="Checkbox"></span>
+        <span class="shortcut" id="hint-captureArea" data-action="captureArea" data-label="Screenshot"></span>
+        <a href="#" class="shortcut shortcut-customize" id="btn-customize-shortcuts">⌨️ Customize</a>
       </div>
       <div class="storage-info" id="storage-info">
         <span class="storage-label">Storage:</span>
@@ -170,6 +171,7 @@
     </footer>
   </div>
 
+  <script src="../lib/shortcuts.js"></script>
   <script src="popup.js" defer></script>
 </body>
 </html>

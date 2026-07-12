@@ -2066,41 +2066,32 @@
   }
 
   function setupKeyboardShortcuts() {
+    // Highlight (Alt+H), checkbox (Alt+C), sidebar (Alt+S) and screenshot
+    // (Alt+X) are dispatched as manifest `commands` (see background.js), which
+    // are rebound from the dashboard via browser.commands.update(). They arrive
+    // here as COMMAND_* runtime messages, so we don't listen for those keys
+    // directly — that would double-fire and ignore the user's custom binding.
+    //
+    // The color shortcuts (default 1-9) are bare keys, which commands can't
+    // express, so they stay as an in-page keydown handler driven by the shared
+    // shortcut map (AnnotateProShortcuts, backed by settings.shortcuts).
+    const shortcuts = window.AnnotateProShortcuts;
     document.addEventListener('keydown', async (e) => {
-      if (e.altKey && e.key.toLowerCase() === 'h') {
-        e.preventDefault();
-        await createHighlight();
-      }
-
-      if (e.altKey && e.key.toLowerCase() === 'c') {
-        e.preventDefault();
-        // Check for selection first - createCheckbox will handle it
-        const selection = window.getSelection();
-        if (selection && !selection.isCollapsed) {
-          await createTextCheckbox();
-        } else {
-          const element = document.activeElement !== document.body
-            ? document.activeElement
-            : document.querySelector(':hover');
-          if (element) {
-            await createCheckbox(element);
-          }
-        }
-      }
-
-      // Number keys 1-9 select colors by sort order
-      if (!e.ctrlKey && !e.altKey && !e.metaKey) {
-        const num = parseInt(e.key);
-        if (num >= 1 && num <= 9 && cachedColors.length > 0) {
+      if (!shortcuts || cachedColors.length === 0) return;
+      // A color shortcut only applies when there's an active text selection.
+      // bindingMatches() enforces the exact modifier state per binding, so a
+      // rebound color (e.g. Ctrl+1) still works and bare digits stay bare.
+      for (let i = 1; i <= 9; i++) {
+        if (shortcuts.matches('color' + i, e)) {
           const selection = window.getSelection();
           if (selection && !selection.isCollapsed) {
             e.preventDefault();
-            const colorIndex = num - 1;
-            const color = cachedColors[colorIndex];
+            const color = cachedColors[i - 1];
             if (color) {
               await createHighlight(color.id);
             }
           }
+          return;
         }
       }
     });

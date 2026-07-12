@@ -634,6 +634,17 @@ body {
   color: #666;
 }
 
+.shortcut-customize {
+  color: #6366f1;
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.shortcut-customize:hover {
+  text-decoration: underline;
+}
+
 .storage-info {
   margin-top: 8px;
   padding-top: 8px;
@@ -758,6 +769,10 @@ kbd {
 
   .section-title {
     color: #999;
+  }
+
+  .shortcut-customize {
+    color: #a5b4fc;
   }
 
   .stat {
